@@ -121,12 +121,25 @@ class PrintJobBuilder:
         self._add_str('\n')
 
     def add_special_text(self, text1, text2, high_contrast=False, font_weight='normal',
-                         font='a'):
+                         font='a', font_size='normal'):
         bold = font_weight == 'bold'
         font = self._typeface(font)
-        line = escpos.format_special_text(text1, text2, self._base_width(font))
         if font != 'a':
             self._buf += TYPEFACES[font][0]
+
+        if font_size == 'md':
+            self._buf += FONT_MD
+            scale = 2
+        elif font_size == 'lg':
+            self._buf += FONT_LG
+            scale = 3
+        else:
+            self._buf += FONT_NORMAL
+            scale = 1
+
+        width = max(1, self._base_width(font) // scale)
+        line = escpos.format_special_text(text1, text2, width)
+
         if bold:
             self._buf += BOLD_ON
         if high_contrast:
@@ -139,6 +152,7 @@ class PrintJobBuilder:
             self._add_str(line)
         if bold:
             self._buf += BOLD_OFF
+        self._buf += FONT_NORMAL
         if font != 'a':
             self._buf += TYPEFACE_RESET
         self._add_str('\n')

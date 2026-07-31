@@ -108,7 +108,7 @@ agrega automáticamente al final.
     ]}},
     { "type": "separator" },
     { "type": "text", "data": "PEDIDO #42", "align": "center", "high_contrast": true },
-    { "type": "special_text", "data": { "text1": "TOTAL", "text2": "$81.50" }, "font_weight": "bold", "high_contrast": true },
+    { "type": "special_text", "data": { "text1": "TOTAL", "text2": "$81.50" }, "font_size": "md", "font_weight": "bold", "high_contrast": true },
     { "type": "special_text", "data": { "text1": "Folio", "text2": "000123" }, "font": "b" },
     { "type": "text", "data": "¡Gracias por su compra!", "align": "center" },
     { "type": "open_withdrawer" }
@@ -121,7 +121,7 @@ agrega automáticamente al final.
 | `type` | Campos | Notas |
 |---|---|---|
 | `text` | `data` (string), `align`: `left`\|`center`\|`right`, `font_size`: `normal`\|`md`\|`lg`, `font_weight`: `normal`\|`bold` (opcional, default `normal`), `font`: `a`\|`b`\|`c` (opcional, default `a`), `high_contrast`: bool (opcional, default `false`) | `md` = doble tamaño, `lg` = triple. `font_weight: "bold"` imprime en negrita. `font` elige la tipografía interna de la impresora y recalcula las columnas del renglón (ver "Fuentes soportadas"). `high_contrast: true` imprime el texto en alto contraste (fondo negro / texto blanco) con un margen de 1 espacio; el relleno de alineación queda fuera del bloque. Las cuatro opciones son combinables |
-| `special_text` | `data: {"text1", "text2"}`, `font_weight`: `normal`\|`bold` (opcional, default `normal`), `font`: `a`\|`b`\|`c` (opcional, default `a`), `high_contrast`: bool (opcional, default `false`) | text1 a la izquierda, text2 a la derecha (para TOTAL, CAMBIO, etc.). `font_weight` y `font` aplican al renglón completo. `high_contrast: true` invierte la línea completa (fondo negro / texto blanco) |
+| `special_text` | `data: {"text1", "text2"}`, `font_size`: `normal`\|`md`\|`lg`, `font_weight`: `normal`\|`bold` (opcional, default `normal`), `font`: `a`\|`b`\|`c` (opcional, default `a`), `high_contrast`: bool (opcional, default `false`) | text1 a la izquierda, text2 a la derecha (para TOTAL, CAMBIO, etc.). `font_size`, `font_weight` y `font` aplican al renglón completo. `md` = doble tamaño, `lg` = triple. `high_contrast: true` invierte la línea completa (fondo negro / texto blanco). Las opciones son combinables |
 | `table` | `data: {"rows": [[cant, producto, precio, importe], ...]}` | Imprime encabezado Cant./Producto/Precio/Importe |
 | `separator` | — | Línea de guiones |
 | `image` | `data` (imagen base64) | Se convierte a B/N y se centra |
