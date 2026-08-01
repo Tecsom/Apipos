@@ -3,12 +3,14 @@
 # Build the macOS installer (.app + .dmg) for Apipos.
 #
 # Usage:
-#   ./build-macos.sh                 # asks for the architecture interactively
+#   ./build-macos.sh                 # asks for the version and architecture
 #   ./build-macos.sh arm64           # Apple Silicon
 #   ./build-macos.sh x86_64          # Intel
 #   ./build-macos.sh universal2      # Universal (Intel + Apple Silicon)
+#   ./build-macos.sh arm64 1.0.5     # arch + version (no prompts)
 #
 # Notes:
+#   - The version is written back to app-meta.env before building.
 #   - Building for an architecture other than the host (or universal2) requires
 #     a universal2 Python and universal2 wheels for every dependency. If the
 #     build fails for a non-native arch, build natively on the matching Mac.
@@ -31,12 +33,50 @@ SPEC="apipos-macos.spec"
 VENV=".venv"
 HOST_ARCH="$(uname -m)"  # arm64 on Apple Silicon, x86_64 on Intel
 
+# ---------------------------------------------------------------------------
+# 0. Choose the version and write it back to app-meta.env
+# ---------------------------------------------------------------------------
+ARG_ARCH="${1:-}"
+NEW_VERSION="${2:-}"
+
+# Comodidad: si el primer argumento parece una versión (./build-macos.sh 1.0.5),
+# tratarlo como tal en vez de como arquitectura.
+if [[ -z "$NEW_VERSION" && "$ARG_ARCH" =~ ^[0-9]+\.[0-9]+ ]]; then
+  NEW_VERSION="$ARG_ARCH"
+  ARG_ARCH=""
+fi
+
+if [[ -z "$NEW_VERSION" ]]; then
+  echo "Versión actual: ${APP_VERSION}"
+  # `|| true` para no abortar por `set -e` si no hay terminal interactiva.
+  read -r -p "Versión a compilar [${APP_VERSION}]: " NEW_VERSION || true
+fi
+NEW_VERSION="${NEW_VERSION:-$APP_VERSION}"
+NEW_VERSION="$(printf '%s' "$NEW_VERSION" | tr -d '[:space:]')"
+
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)*$ ]]; then
+  echo "ERROR: versión inválida \"$NEW_VERSION\". Usa el formato 1.0.5" >&2
+  exit 1
+fi
+
+if [[ "$NEW_VERSION" != "$APP_VERSION" ]]; then
+  echo "==> Actualizando app-meta.env: ${APP_VERSION} -> ${NEW_VERSION}"
+  sed -E "s|^APP_VERSION=.*|APP_VERSION=${NEW_VERSION}|" app-meta.env > app-meta.env.tmp
+  mv app-meta.env.tmp app-meta.env
+  APP_VERSION="$(read_meta APP_VERSION)"
+  export APP_VERSION
+  if [[ "$APP_VERSION" != "$NEW_VERSION" ]]; then
+    echo "ERROR: no se pudo actualizar APP_VERSION en app-meta.env" >&2
+    exit 1
+  fi
+fi
+
 echo "==> ${APP_NAME} v${APP_VERSION} (${APP_PUBLISHER})"
 
 # ---------------------------------------------------------------------------
 # 1. Choose the target architecture
 # ---------------------------------------------------------------------------
-ARCH="${1:-}"
+ARCH="$ARG_ARCH"
 if [[ -z "$ARCH" ]]; then
   echo "Selecciona la arquitectura del instalador:"
   echo "  1) Apple Silicon (arm64)"

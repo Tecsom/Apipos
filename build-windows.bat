@@ -6,7 +6,10 @@ REM Produces a standalone executable (dist\Apipos.exe) and, if Inno Setup
 REM (iscc) is available, a full installer (dist\Apipos-Setup.exe).
 REM
 REM Usage: double-click this file, or run it from a terminal:
-REM   build-windows.bat
+REM   build-windows.bat            (pregunta la version a compilar)
+REM   build-windows.bat 1.0.5      (usa esa version, sin preguntar)
+REM
+REM La version elegida se escribe en app-meta.env antes de compilar.
 REM ===========================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -17,6 +20,40 @@ for /f "tokens=1,2 delims==" %%A in ('findstr /v "^#" app-meta.env') do set "%%A
 set SPEC=apipos.spec
 set VENV=.venv
 
+REM --- 0. Version: preguntar y actualizar app-meta.env ----------------------
+set "NEW_VERSION=%~1"
+if not defined NEW_VERSION (
+  echo.
+  echo Version actual: %APP_VERSION%
+  set /p "NEW_VERSION=Version a compilar [%APP_VERSION%]: "
+)
+if not defined NEW_VERSION set "NEW_VERSION=%APP_VERSION%"
+set "NEW_VERSION=%NEW_VERSION: =%"
+set "NEW_VERSION=%NEW_VERSION:"=%"
+
+REM Solo digitos y puntos, empezando y terminando en digito, con al menos un punto.
+REM (findstr no soporta grupos, por eso son dos comprobaciones.)
+set "VERSION_OK=1"
+echo(%NEW_VERSION%|findstr /r /c:"^[0-9][0-9.]*[0-9]$" >nul || set "VERSION_OK="
+echo(%NEW_VERSION%|findstr /r /c:"[0-9]\.[0-9]" >nul || set "VERSION_OK="
+if not defined VERSION_OK (
+  echo ERROR: version invalida "%NEW_VERSION%". Usa el formato 1.0.5
+  exit /b 1
+)
+
+if "%NEW_VERSION%"=="%APP_VERSION%" goto :version_ok
+
+echo ==^> Actualizando app-meta.env: %APP_VERSION% -^> %NEW_VERSION%
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path (Get-Location) 'app-meta.env'; $t=[IO.File]::ReadAllText($p); $t=[Text.RegularExpressions.Regex]::Replace($t,'(?m)^APP_VERSION=.*$','APP_VERSION=%NEW_VERSION%'); [IO.File]::WriteAllText($p,$t,(New-Object Text.UTF8Encoding($false)))"
+
+REM Releer para confirmar que el cambio quedo escrito.
+for /f "tokens=1,2 delims==" %%A in ('findstr /v "^#" app-meta.env') do set "%%A=%%B"
+if not "!APP_VERSION!"=="%NEW_VERSION%" (
+  echo ERROR: no se pudo actualizar APP_VERSION en app-meta.env
+  exit /b 1
+)
+
+:version_ok
 echo ==^> %APP_NAME% v%APP_VERSION% ^(%APP_PUBLISHER%^)
 
 REM --- 1. Virtual environment + dependencies --------------------------------
