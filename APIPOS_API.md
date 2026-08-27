@@ -97,7 +97,7 @@ agrega automáticamente al final.
   "type": "RAW",
   "settings": { "paper_size": 80 },
   "content": [
-    { "type": "image", "data": "<PNG/JPG en base64>" },
+    { "type": "image", "data": "<PNG/JPG en base64>", "width": 250 },
     { "type": "text", "data": "MI TIENDA S.A.", "align": "center", "font_size": "md", "font_weight": "bold" },
     { "type": "text", "data": "Av. Principal 123", "align": "center" },
     { "type": "text", "data": "RFC ABC010101XYZ  Términos y condiciones...", "align": "center", "font": "b" },
@@ -124,7 +124,7 @@ agrega automáticamente al final.
 | `special_text` | `data: {"text1", "text2"}`, `font_size`: `normal`\|`md`\|`lg`, `font_weight`: `normal`\|`bold` (opcional, default `normal`), `font`: `a`\|`b`\|`c` (opcional, default `a`), `high_contrast`: bool (opcional, default `false`) | text1 a la izquierda, text2 a la derecha (para TOTAL, CAMBIO, etc.). `font_size`, `font_weight` y `font` aplican al renglón completo. `md` = doble tamaño, `lg` = triple. `high_contrast: true` invierte la línea completa (fondo negro / texto blanco). Las opciones son combinables |
 | `table` | `data: {"rows": [[cant, producto, precio, importe], ...]}` | Imprime encabezado Cant./Producto/Precio/Importe |
 | `separator` | — | Línea de guiones |
-| `image` | `data` (imagen base64) | Se convierte a B/N y se centra |
+| `image` | `data` (imagen base64), `width` opcional (dots) | Se convierte a B/N, conserva la proporcion y se centra. Default: 250 dots. `width_dots` es un alias |
 | `open_withdrawer` | — | Abre el cajón al final del ticket |
 
 ### Fuentes soportadas (`font`)

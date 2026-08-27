@@ -220,6 +220,27 @@ def _print_pdf_job(printer_name, pdf_data, settings=None):
 
 
 DOTS_PER_MM = 8  # 203 DPI thermal heads
+DEFAULT_IMAGE_WIDTH_DOTS = 384  
+
+
+def _image_width_dots(item):
+    """Return the requested RAW image width in printer dots.
+
+    ``width`` is intentionally defined per image (rather than at the job
+    level), so a logo and a QR code can use different sizes in one ticket.
+    ``width_dots`` is accepted as an explicit alias for clients that already
+    use the same terminology as the PDF settings. The image height is always
+    calculated from its aspect ratio.
+    """
+    raw_width = item.get('width_dots', item.get('width', DEFAULT_IMAGE_WIDTH_DOTS))
+    try:
+        width = int(raw_width)
+    except (TypeError, ValueError):
+        raise ValueError("Image 'width' must be a positive integer (in dots).")
+
+    if width <= 0:
+        raise ValueError("Image 'width' must be a positive integer (in dots).")
+    return width
 
 
 def _parse_label_size(raw):
@@ -394,7 +415,11 @@ def _print_raw_job(printer_name, settings, content):
             image_bw = escpos.image_base64_to_bitmap(item['data'])
             if not image_bw:
                 return error_response("Error converting image to black and white.")
-            resized_image = escpos.resize_image(image_bw, target_width=int(384 * 1))
+            try:
+                image_width = _image_width_dots(item)
+            except ValueError as e:
+                return error_response(str(e))
+            resized_image = escpos.resize_image(image_bw, target_width=image_width)
             image_data = escpos.convert_image_to_escpos_format(resized_image)
             builder.add_image(image_data)
 

@@ -157,7 +157,7 @@ Acepta dos tipos de trabajo según el campo `type`:
       "data": { "rows": [["2", "Café", "30.00", "60.00"]] }
     },
     { "type": "special_text", "data": { "text1": "Total", "text2": "$60.00" } },
-    { "type": "image", "data": "<base64>" },
+    { "type": "image", "data": "<base64>", "width": 250 },
     { "type": "open_withdrawer" }
   ]
 }
@@ -180,7 +180,7 @@ Acepta dos tipos de trabajo según el campo `type`:
 | `special_text`   | `{ "text1": "...", "text2": "..." }`               | Dos textos justificados a los extremos |
 | `table`          | `{ "rows": [[cant, prod, precio, importe], ...] }` | Encabezado fijo Cant./Producto/Precio/Importe |
 | `separator`      | —                                                  | Línea de guiones a lo ancho            |
-| `image`          | string base64                                      | Se convierte a B/N y ESC/POS           |
+| `image`          | string base64; `width` opcional (dots)             | Se convierte a B/N y ESC/POS; conserva la proporcion. Default: 250 dots |
 | `open_withdrawer`| —                                                  | Abre el cajón al final del ticket      |
 
 > Compatibilidad: `POST /print` también acepta el formato antiguo (una lista de
