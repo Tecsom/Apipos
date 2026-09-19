@@ -220,7 +220,47 @@ def _print_pdf_job(printer_name, pdf_data, settings=None):
 
 
 DOTS_PER_MM = 8  # 203 DPI thermal heads
-DEFAULT_IMAGE_WIDTH_DOTS = 384  
+DEFAULT_IMAGE_WIDTH_DOTS = 384
+
+# Ceiling for a single RAW image, in printer dots (75 mm of paper at 203 DPI).
+# The client is supposed to send a sized image, but nothing stops a caller from
+# posting a 4 000 dot photo: without a ceiling that is half a metre of paper and
+# a minute of printing per ticket. Anything taller is scaled down, never
+# rejected — a receipt with a smaller logo is still a receipt, one that fails to
+# print is not. Override per request with settings.max_image_height_dots.
+MAX_IMAGE_HEIGHT_DOTS = 600
+
+
+def _positive_int(settings, key):
+    """Read an optional positive integer from settings.
+
+    Returns None when the key is absent; raises ValueError when it is present
+    but unusable, so a typo becomes a 400 with a clear message instead of a
+    silent fallback to the default.
+    """
+    raw = (settings or {}).get(key)
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{key}' must be a positive integer.")
+    if value <= 0:
+        raise ValueError(f"'{key}' must be a positive integer.")
+    return value
+
+
+def _cap_image_height(image_bw, max_height):
+    """Scale the image down (keeping the aspect ratio) if it is taller than allowed."""
+    if not max_height or image_bw.height <= max_height:
+        return image_bw
+
+    target_width = max(1, int(image_bw.width * max_height / image_bw.height))
+    print(
+        f"Image is {image_bw.width}x{image_bw.height} dots, taller than the {max_height} dot "
+        f"ceiling: scaling down to {target_width} dots wide."
+    )
+    return escpos.resize_image(image_bw, target_width)
 
 
 def _image_width_dots(item):
@@ -408,6 +448,14 @@ def _print_raw_job(printer_name, settings, content):
     builder = PrintJobBuilder(width)
     open_withdrawer = False
 
+    # Both knobs exist because the safe values were measured on ONE printer: a
+    # stubborn model can be tuned from the caller without a new build.
+    try:
+        max_band_bytes = _positive_int(settings, 'max_band_bytes')
+        max_image_height = _positive_int(settings, 'max_image_height_dots') or MAX_IMAGE_HEIGHT_DOTS
+    except ValueError as e:
+        return error_response(str(e))
+
     for item in content:
         item_type = item.get('type')
 
@@ -419,8 +467,15 @@ def _print_raw_job(printer_name, settings, content):
                 image_width = _image_width_dots(item)
             except ValueError as e:
                 return error_response(str(e))
-            resized_image = escpos.resize_image(image_bw, target_width=image_width)
-            image_data = escpos.convert_image_to_escpos_format(resized_image)
+            resized_image = _cap_image_height(
+                escpos.resize_image(image_bw, target_width=image_width), max_image_height
+            )
+            # Centering goes into the pixels (see pad_left_to_center); this is
+            # where THIS printer's printable dot width is known.
+            centered_image = escpos.pad_left_to_center(resized_image, width * escpos.DOTS_PER_CHAR)
+            image_data = escpos.convert_image_to_escpos_format(
+                centered_image, max_band_bytes=max_band_bytes
+            )
             builder.add_image(image_data)
 
         elif item_type == 'text':

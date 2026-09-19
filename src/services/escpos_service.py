@@ -138,7 +138,44 @@ def resize_image(image, target_width):
     return image.resize((target_width, target_height), Image.NEAREST)
 
 
-def convert_image_to_escpos_format(image_bw, band_height=255):
+# Font A is 12 x 24 dots, so the text columns times the character width give the
+# printable dots: 48 cols -> 576 (80 mm paper) and 32 -> 384 (58 mm).
+DOTS_PER_CHAR = 12
+
+# Data cap per GS v 0 command. Measured, not guessed: on a POS80 a single command
+# carrying 2 304 bytes derails the printer (it stops counting the bytes the
+# command declared and spits the rest out as text), while 1 152 bytes print fine.
+# The cap leaves margin and slices by BYTES rather than rows because the limit is
+# the buffer: a wider image needs shorter bands than a narrow one.
+MAX_BAND_BYTES = 1024
+
+
+def pad_left_to_center(image_bw, printable_dots):
+    """Pad the image on the LEFT with white so it prints centered.
+
+    Image centering is NOT delegated to `ESC a 1`: on the POS80 we tested, the
+    same image came out centered when it was short and flush left when it was
+    tall — the alignment is lost as soon as the printer runs tight on buffer.
+    Baking the margin into the pixels makes the position independent of whatever
+    the firmware remembers.
+
+    Only the LEFT side is padded: trailing white adds nothing and every dot is
+    more bytes to travel and for the printer to swallow.
+    """
+    if not printable_dots or image_bw.width >= printable_dots:
+        return image_bw
+
+    offset = (printable_dots - image_bw.width) // 2
+    # 255 = white. In mode '1' Pillow accepts both 1 and 255 as white but keeps
+    # the raw value in the pixels: with 1, any later convert('L') or comparison
+    # against 255 would surprise the reader. With 255 the margin is white no
+    # matter who looks at it.
+    canvas = Image.new('1', (image_bw.width + offset, image_bw.height), 255)
+    canvas.paste(image_bw, (offset, 0))
+    return canvas
+
+
+def convert_image_to_escpos_format(image_bw, band_height=None, max_band_bytes=None):
     """Encode a 1-bit PIL image as a GS v 0 raster bit image (ESC/POS standard).
 
     GS v 0 is the modern raster command supported across ESC/POS printers
@@ -149,11 +186,26 @@ def convert_image_to_escpos_format(image_bw, band_height=255):
     The image is emitted in horizontal bands so a tall receipt stays within the
     printer's raster buffer. A set bit means "print a dot"; in a mode '1' image
     a pixel value of 0 is black, so black pixels become set bits.
+
+    BAND SIZE — why ~1 KB per command and not the 255 rows the command allows:
+    the printer must hold the WHOLE band before it prints anything, and a cheap
+    80 mm head has a few KB of buffer. A 384 x 240 logo in one band is a single
+    command carrying 11 520 bytes; when the buffer fills, the printer drops what
+    it cannot take, loses count of the bytes the command declared and prints the
+    REST OF THE RASTER AS TEXT — a wall of `y` characters instead of a logo (and
+    it fails intermittently, which is worse). Measured on a POS80: 2 304 bytes in
+    one command fail, 1 152 print fine. The band is computed from the row width
+    so a wider image gets fewer rows per command; the extra cost is 8 bytes of
+    header per band.
     """
     width, height = image_bw.size
     pixels = image_bw.load()
     bytes_per_row = (width + 7) // 8
     xL, xH = bytes_per_row & 0xFF, (bytes_per_row >> 8) & 0xFF
+
+    if band_height is None:
+        budget = max_band_bytes or MAX_BAND_BYTES
+        band_height = max(1, min(255, budget // max(1, bytes_per_row)))
 
     out = bytearray()
     for band_start in range(0, height, band_height):

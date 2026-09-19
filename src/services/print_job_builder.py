@@ -176,8 +176,14 @@ class PrintJobBuilder:
         self._add_str(escpos.get_separator(self.width))
 
     def add_image(self, image_data):
-        # Switch to image mode (tight line height, centered), then restore text.
-        self._buf += LINE_HEIGHT_IMAGE + ALIGN_CENTER
+        # Switch to image mode (tight line height), then restore text.
+        #
+        # Images print LEFT-aligned on purpose: the centering already lives in the
+        # pixels (pad_left_to_center). Leaving `ESC a 1` here would add the
+        # firmware margin on top of the one the image carries and push it right —
+        # and that centering is unreliable anyway: on the POS80 we tested it is
+        # lost as soon as the image is tall and the printer runs tight on buffer.
+        self._buf += LINE_HEIGHT_IMAGE + ALIGN_LEFT
         self._buf += image_data
         self._add_str('\n')
         self._buf += LINE_HEIGHT_TEXT + ALIGN_LEFT

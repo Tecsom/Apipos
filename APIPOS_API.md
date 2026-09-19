@@ -152,6 +152,17 @@ equivalen a `"b"`); un valor no reconocido usa la Fuente A en silencio.
 
 - `paper_size`: `80` (default, 48 columnas) o `58` (32 columnas), en mm.
 - `char_width`: columnas explícitas (`48`/`32`); tiene prioridad sobre `paper_size`.
+- `max_band_bytes`: bytes por comando de imagen (default `1024`). Las imágenes se
+  mandan en bandas `GS v 0` de ese tamaño; si una impresora concreta se descarrila
+  con imágenes (saca el raster como letras `ÿ` en vez de dibujarlo), bájalo a `512`.
+  Medido en una POS80: 2 304 bytes en un comando fallan, 1 152 imprimen bien.
+- `max_image_height_dots`: alto máximo de una imagen en puntos (default `600`, unos
+  75 mm). Lo más alto se REDUCE conservando la proporción y se avisa en el log; no
+  se rechaza el trabajo.
+
+> Las imágenes se centran rellenando de blanco por la izquierda hasta el ancho
+> imprimible, no con `ESC a 1`: ese centrado lo pierden algunas impresoras en
+> cuanto la imagen es alta.
 
 ---
 
