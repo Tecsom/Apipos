@@ -47,6 +47,14 @@ def print_controller():
         return jsonify(error_response(str(e))), 500
 
 
+def render_controller():
+    try:
+        result = printer_service.render_job(request.get_json(silent=True))
+        return _respond(result)
+    except Exception as e:
+        return jsonify(error_response(str(e))), 500
+
+
 def open_withdrawer_controller():
     try:
         result = printer_service.open_drawer(request.get_json(silent=True))

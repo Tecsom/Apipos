@@ -5,3 +5,5 @@ Pillow
 wxPython
 # PDF rasterization (PDF -> image -> ESC/POS) for thermal printers
 PyMuPDF
+# System font catalog + PDF font subsetting (ticket PDF renderer)
+fonttools==4.60.2

@@ -31,6 +31,12 @@ def print_endpoint():
     return printer_controller.print_controller()
 
 
+@printer_bp.route('/render', methods=['POST'])
+@cross_origin()
+def render_endpoint():
+    return printer_controller.render_controller()
+
+
 @printer_bp.route('/print/test', methods=['GET', 'POST'])
 @cross_origin()
 def print_test_endpoint():

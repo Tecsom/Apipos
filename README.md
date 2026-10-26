@@ -18,6 +18,8 @@ capa de _backends_ intercambiable.
 - [Endpoints de la API](#endpoints-de-la-api)
 - [Formato de impresión](#formato-de-impresión)
 - [Desarrollo local](#desarrollo-local)
+- [Pruebas](#pruebas)
+- [Librería JS (`apipos-js`)](#librería-js-apipos-js)
 - [Crear instalador según el SO](#crear-instalador-según-el-so)
 - [Notas](#notas)
 
@@ -110,6 +112,8 @@ Base URL: `http://localhost:50432`
 | `GET`  | `/printers/selected`  | Devuelve la impresora por defecto actual           |
 | `POST` | `/printers/selected`  | Cambia la impresora por defecto                    |
 | `POST` | `/print`              | Imprime un ticket (`type`: `RAW` ESC/POS o `PDF`)  |
+| `POST` | `/render`             | Vista previa: ticket renderizado a PDF/PNG (base64), sin imprimir |
+| `GET`  | `/fonts`              | Catálogo de fuentes instaladas (`?refresh=1` re-escanea) |
 | `GET`  | `/print/test`         | Imprime el PDF de prueba incluido (`?printer=` opcional) |
 | `POST` | `/open-withdrawer`    | Abre el cajón de dinero                            |
 
@@ -245,6 +249,20 @@ Apipos genera comandos **ESC/POS** (estándar de impresoras térmicas de tickets
 El ancho del ticket se mide en columnas de caracteres: típicamente **32** para
 papel de 58 mm y **48** para papel de 80 mm.
 
+### Renderizado de tickets a PDF
+
+Con `settings.renderer: "pdf"` en un trabajo `RAW`, Apipos maqueta el mismo
+`content` como un PDF de una sola página (del alto exacto del ticket) usando las
+**fuentes instaladas en el sistema** (las que lista `GET /fonts`) o las
+integradas `sans-serif` / `serif` / `monospace`, y lo imprime por la ruta PDF
+(`pdf_mode: "raw"` lo rasteriza a ESC/POS; `"driver"` lo entrega al driver del
+SO). Así el ticket puede llevar tipografías proporcionales, tamaños en puntos,
+cursiva, subrayado, columnas de tabla a medida y bloques `html`. `POST /render`
+devuelve ese mismo PDF (o un PNG) sin imprimir, para vista previa. El camino
+ESC/POS por defecto (`renderer` ausente o `"escpos"`) no cambia: produce
+exactamente los mismos bytes de siempre. El contrato completo está en
+[APIPOS_API.md](APIPOS_API.md).
+
 ---
 
 ## Desarrollo local
@@ -274,16 +292,94 @@ curl http://localhost:50432/health
 
 | Archivo                     | Plataforma | Incluye                                          |
 |-----------------------------|------------|--------------------------------------------------|
-| `requirements.txt`          | común      | Flask, Flask-Cors, Pillow, wxPython, **PyMuPDF** |
+| `requirements.txt`          | común      | Flask, Flask-Cors, Pillow, wxPython, **PyMuPDF**, **fontTools** (catálogo de fuentes y subconjunto de fuentes en PDF) |
 | `requirements-windows.txt`  | Windows    | + `pywin32`                                      |
 | `requirements-macos.txt`    | macOS/Linux| nada extra (usa CUPS del sistema)                |
 
 > `PyMuPDF` es común a ambos SO porque se usa para **rasterizar PDFs** (PDF →
 > imagen → ESC/POS), necesario para impresoras térmicas.
 >
+> `fontTools` (puro Python) lee las fuentes instaladas para `GET /fonts` y para
+> el renderizado de tickets a PDF, y es lo que permite a PyMuPDF incrustar solo
+> los glifos usados de cada fuente (un ticket con Arial baja de ~1.6 MB a
+> decenas de KB). Los `.spec` de PyInstaller incluyen sus submódulos
+> (`collect_submodules('fontTools')`) porque fontTools carga sus tablas de forma
+> dinámica.
+>
 > En macOS/Linux la impresión de bajo nivel usa CUPS (`lp` / `lpstat`), que viene
 > con el sistema. (Opcionalmente, si `python-escpos` está instalado, el backend
 > usa su wrapper `Lp`.)
+
+---
+
+## Pruebas
+
+Las pruebas unitarias viven en `tests/` (separadas de `src/`) y usan **pytest**
+con un backend de impresora falso, así que no necesitan impresora ni el servidor
+levantado. Las convenciones están en `docs/TESTING.md`.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements-dev.txt   # solo la primera vez
+python -m pytest tests/ -q
+```
+
+`pytest` es dependencia de desarrollo (`requirements-dev.txt`); no se empaca en
+los instaladores.
+
+---
+
+## Librería JS (`apipos-js`)
+
+`@tecsom/apipos-js` es el cliente oficial de esta API para el front (navegador):
+TypeScript estricto compilado a módulos ES con sus tipos (`.d.ts`), sin
+dependencias en runtime. Envuelve los endpoints de [APIPOS_API.md](APIPOS_API.md)
+(`checkHealth`, `listPrinters`, `listFonts`, `renderTicket`, `createPrinter` →
+`print` / `printPDF` / `openDrawer` / `render`). Vive en **su propio repo**,
+`Tecsom/apipos-js`; en local es la carpeta hermana `../apipos-js`
+(`REPOSITORIES/apipos-js`). Nada de la librería vive en este repo; su uso
+detallado está en su README.
+
+### Instalación desde ranitas-pdv
+
+| Caso | Comando (en ranitas-pdv) |
+|---|---|
+| Desarrollo local (repos hermanos) | `pnpm add -D "file:../apipos-js"` |
+| Release, desde git | `pnpm add -D "github:Tecsom/apipos-js#vX.Y.Z"` |
+| Release, tarball | `pnpm add -D "https://github.com/Tecsom/apipos-js/releases/download/vX.Y.Z/tecsom-apipos-js-X.Y.Z.tgz"` |
+
+Después, `pnpm run sync:apipos-js`: ranitas-pdv sirve sus módulos estáticos
+desde `/public` sin empaquetador, así que copia el `dist/` compilado de la
+librería a `public/dist/libs/apipos-js/` (y escribe su `VERSION`).
+
+### Regla de lockstep
+
+- La versión de la librería es **siempre** el `APP_VERSION` de
+  [app-meta.env](app-meta.env): la librería `X.Y.Z` está hecha para Apipos
+  `X.Y.Z`. Nunca se edita a mano en `apipos-js`: allí `npm run sync-version` la
+  copia de `../Apipos/app-meta.env` (o de `--from <ruta>`) a `package.json` y
+  `src/version.ts`, y `npm run check-version` sale con código 1 si difieren.
+- En runtime se comprueba con el handshake de headers (`X-Apipos-Client` /
+  `X-Apipos-Version`, ver "Versionado y handshake" en
+  [APIPOS_API.md](APIPOS_API.md)): si el front y el Apipos de la caja no
+  coinciden, la librería avisa en la consola del navegador una vez por página
+  (por versión distinta de Apipos); con `onVersionMismatch`, una vez por
+  cliente. Apipos, por su lado, escribe `[apipos] <mensaje>` en su stdout.
+  Nunca bloquea la impresión.
+- El front (ranitas-pdv) y el Apipos instalado en las cajas deben ir en la misma
+  versión.
+
+### Checklist de release (dos repos)
+
+1. Editar `APP_VERSION` en `Apipos/app-meta.env`.
+2. En `apipos-js`: `npm run sync-version`.
+3. `python -m pytest tests/ -q` en Apipos y `npm test` en apipos-js.
+4. Commit `chore: bump version X.Y.Z` en **ambos** repos.
+5. Tag `vX.Y.Z` en **ambos** repos.
+6. `./build-macos.sh` / `build-windows.bat` (en Apipos, cada uno en su SO).
+7. `npm run pack` en apipos-js → `release/tecsom-apipos-js-X.Y.Z.tgz`.
+8. Releases de GitHub `vX.Y.Z`: Apipos con el `.dmg` y `Apipos-Setup.exe`;
+   apipos-js con `tecsom-apipos-js-X.Y.Z.tgz`.
 
 ---
 

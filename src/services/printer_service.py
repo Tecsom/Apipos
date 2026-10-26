@@ -8,11 +8,14 @@ any printer by name and override paper settings, instead of relying solely on
 the single printer selected from the tray.
 """
 import base64
+import math
 
 from src.config import TEST_PDF, TEST_LABEL_PDF
 from src.services import escpos_service as escpos
-from src.services.print_job_builder import PrintJobBuilder
+from src.services import ticket_pdf_renderer as pdf_renderer
+from src.services.print_job_builder import PrintJobBuilder, OPEN_DRAWER
 from src.services.storage_service import load_selected_printer, save_selected_printer
+from src.utils.coerce import truthy as _truthy
 from src.utils.response import success_response, error_response
 
 
@@ -132,7 +135,11 @@ def print_job(payload):
     """Render and send a print job to the target printer.
 
     Routes by job `type`:
-      - "RAW" (default): builds an ESC/POS ticket from `content`.
+      - "RAW" (default): renders `content` with `settings.renderer`:
+          - "escpos" (default): builds an ESC/POS ticket (byte-identical to
+            the historic path);
+          - "pdf": lays the ticket out as a PDF on the backend and prints it
+            through the PDF path (`pdf_mode` raw or driver).
       - "PDF": prints a base64 PDF buffer (`data`) as a document.
     """
     printer_name, job_type, settings, content, pdf_data = _parse_print_payload(payload)
@@ -146,17 +153,13 @@ def print_job(payload):
     if job_type == 'PDF':
         return _print_pdf_job(printer_name, pdf_data, settings)
     if job_type == 'RAW':
-        return _print_raw_job(printer_name, settings, content)
+        renderer = str((settings or {}).get('renderer') or 'escpos').strip().lower()
+        if renderer == 'escpos':
+            return _print_raw_job(printer_name, settings, content)
+        if renderer == 'pdf':
+            return _print_rendered_pdf_job(printer_name, settings, content)
+        return error_response(f"Unsupported renderer '{renderer}'. Use 'escpos' or 'pdf'.")
     return error_response(f"Unsupported job type '{job_type}'. Use 'RAW' or 'PDF'.")
-
-
-def _truthy(value):
-    """Coerce a setting value (bool / str / number) to a boolean."""
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return False
-    return str(value).strip().lower() in ('1', 'true', 'yes', 'on', 'si', 'sí')
 
 
 def _should_cut(settings, is_label=False):
@@ -505,6 +508,9 @@ def _print_raw_job(printer_name, settings, content):
         elif item_type == 'separator':
             builder.add_separator()
 
+        elif item_type == 'spacer':
+            builder.add_spacer(_spacer_lines(item))
+
         elif item_type == 'open_withdrawer':
             open_withdrawer = True
 
@@ -519,4 +525,250 @@ def _print_raw_job(printer_name, settings, content):
     return success_response(
         data={"printer": printer_name, "char_width": width},
         message="Print job completed.",
+    )
+
+
+# Same 200 mm ceiling as the PDF renderer's spacer (SPACER_MAX_MM), at ~4 mm per line.
+SPACER_MAX_LINES = 50
+
+
+def _spacer_lines(item):
+    """Blank lines a `spacer` item takes on the ESC/POS path (1..SPACER_MAX_LINES).
+
+    `lines` wins when present; otherwise `height_mm` is converted at ~4 mm per
+    text line. Unusable values fall back to a single line (never an error).
+    """
+    try:
+        if item.get('lines') is not None:
+            return min(SPACER_MAX_LINES, max(1, int(float(item['lines']))))
+        if item.get('height_mm') is not None:
+            return min(SPACER_MAX_LINES, max(1, round(float(item['height_mm']) / 4)))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return 1
+
+
+# ---------------------------------------------------------------------------
+# PDF ticket renderer (settings.renderer: "pdf") and POST /render
+# ---------------------------------------------------------------------------
+
+DEFAULT_RENDER_FORMAT = 'pdf'
+RENDER_FORMATS = ('pdf', 'png')
+DEFAULT_RENDER_DPI = 203
+RENDER_DPI_RANGE = (72, 600)
+RENDER_DPI_ERROR = "'dpi' must be an integer between 72 and 600."
+
+
+def _finite_number(value):
+    """float(value) for numbers and numeric strings; None otherwise (bools included)."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _positive_number(value):
+    number = _finite_number(value)
+    return number if number is not None and number > 0 else None
+
+
+def _render_width_mm(settings):
+    """Printable page width in mm; the first rule that applies wins.
+
+      1. settings.width_mm
+      2. label_settings.width (converted to mm by its unit; invalid -> ValueError)
+      3. settings.width_dots / 8
+      4. paper_size (mm):  >= 80 -> 72, otherwise 48
+      5. char_width (cols): >= 48 -> 72, otherwise 48
+      6. 72 (576 printable dots of 80 mm paper)
+    """
+    width_mm = _positive_number(settings.get('width_mm'))
+    if width_mm:
+        return width_mm
+
+    label = _parse_label_size(settings.get('label_settings'))
+    if label:
+        return label['width_mm']
+
+    width_dots = _positive_number(settings.get('width_dots'))
+    if width_dots:
+        return width_dots / DOTS_PER_MM
+
+    paper_size = _positive_number(settings.get('paper_size') or settings.get('paper_size_mm'))
+    if paper_size:
+        return 72.0 if paper_size >= 80 else 48.0
+
+    char_width = _positive_number(settings.get('char_width'))
+    if char_width:
+        return 72.0 if char_width >= 48 else 48.0
+
+    return pdf_renderer.DEFAULT_WIDTH_MM
+
+
+def _render_options(settings):
+    """Normalized renderer options (TASK-005 section 6.4.1) from the job settings.
+
+    Raises ValueError (user-facing message) for an invalid `font.size`, invalid
+    `label_settings` or an invalid `max_image_height_dots`; every other bad
+    value silently falls back to its default.
+    """
+    settings = settings or {}
+
+    font = settings.get('font') if isinstance(settings.get('font'), dict) else {}
+    size = pdf_renderer.DEFAULT_FONT_SIZE
+    if font.get('size') is not None:
+        size = _finite_number(font['size'])
+        low, high = pdf_renderer.FONT_SIZE_RANGE
+        if size is None or not low <= size <= high:
+            raise ValueError(pdf_renderer.FONT_SIZE_ERROR)
+    line_height = _finite_number(font.get('line_height'))
+    low, high = pdf_renderer.LINE_HEIGHT_RANGE
+    if line_height is None or not low <= line_height <= high:
+        line_height = pdf_renderer.DEFAULT_LINE_HEIGHT
+
+    raw_margins = settings.get('margins_mm') if isinstance(settings.get('margins_mm'), dict) else {}
+    margins = {}
+    for side, default in pdf_renderer.DEFAULT_MARGINS_MM.items():
+        value = _finite_number(raw_margins.get(side))
+        margins[side] = value if value is not None and value >= 0 else default
+
+    return {
+        'width_mm': float(_render_width_mm(settings)),
+        'margins_mm': margins,
+        'font': {
+            'family': str(font.get('family') or '').strip() or pdf_renderer.DEFAULT_FONT_FAMILY,
+            'size': float(size),
+            'line_height': float(line_height),
+        },
+        'max_height_mm': _positive_number(settings.get('max_height_mm'))
+                         or pdf_renderer.DEFAULT_MAX_HEIGHT_MM,
+        'max_image_height_dots': _positive_int(settings, 'max_image_height_dots')
+                                 or MAX_IMAGE_HEIGHT_DOTS,
+    }
+
+
+def _print_rendered_pdf_job(printer_name, settings, content):
+    """Render a RAW ticket to PDF (ticket_pdf_renderer) and print it as a PDF.
+
+    `pdf_mode` follows the PDF jobs rule (driver when label_settings is given,
+    raw otherwise). Driver: the custom media is the exact rendered page size.
+    Raw: rasterized at the page width (width_mm x 8 dots) unless width_dots is
+    given. `open_withdrawer` sends the drawer pulse as a SECOND raw job after
+    the ticket (the PDF itself cannot carry ESC/POS commands).
+    """
+    if not content:
+        return error_response("No content to print.")
+    settings = settings or {}
+
+    try:
+        rendered = pdf_renderer.render_ticket_pdf(content, _render_options(settings))
+    except ValueError as e:
+        return error_response(str(e))
+    page_mm = rendered['page_mm']
+
+    pdf_settings = dict(settings)
+    try:
+        label = _parse_label_size(settings.get('label_settings'))
+    except ValueError as e:
+        return error_response(str(e))
+    mode = str(settings.get('pdf_mode') or ('driver' if label else 'raw')).lower()
+
+    if mode in ('driver', 'document'):
+        pdf_settings['pdf_mode'] = 'driver'
+        pdf_settings['label_settings'] = {
+            'width': page_mm['width'], 'height': page_mm['height'], 'unit': 'mm',
+        }
+    elif mode in ('raw', 'raster'):
+        pdf_settings['pdf_mode'] = 'raw'
+        if not pdf_settings.get('width_dots'):
+            pdf_settings['width_dots'] = int(round(page_mm['width'] * DOTS_PER_MM))
+    # Any other mode: _print_pdf_bytes returns its existing "Unsupported pdf_mode" error.
+
+    result = _print_pdf_bytes(printer_name, rendered['pdf_bytes'], pdf_settings)
+    if result['status'] == 'error':
+        return result
+
+    drawer_opened = False
+    if rendered['open_drawer']:
+        escpos.send_raw(printer_name, OPEN_DRAWER)
+        drawer_opened = True
+
+    result['data'].update({
+        'renderer': 'pdf',
+        'page_mm': page_mm,
+        'fonts': rendered['fonts'],
+        'warnings': rendered['warnings'],
+        'drawer_opened': drawer_opened,
+    })
+    result['data']['type'] = 'RAW'
+    result['message'] = "Rendered ticket sent as PDF."
+    return result
+
+
+def _render_dpi(raw):
+    """PNG resolution: an integer (int or integer string) within RENDER_DPI_RANGE."""
+    if raw is None:
+        return DEFAULT_RENDER_DPI
+    if isinstance(raw, bool):
+        raise ValueError(RENDER_DPI_ERROR)
+    if isinstance(raw, int):
+        dpi = raw
+    elif isinstance(raw, float) and raw.is_integer():
+        dpi = int(raw)
+    elif isinstance(raw, str):
+        try:
+            dpi = int(raw.strip())
+        except ValueError:
+            raise ValueError(RENDER_DPI_ERROR)
+    else:
+        raise ValueError(RENDER_DPI_ERROR)
+    if not RENDER_DPI_RANGE[0] <= dpi <= RENDER_DPI_RANGE[1]:
+        raise ValueError(RENDER_DPI_ERROR)
+    return dpi
+
+
+def render_job(payload):
+    """Render a RAW ticket to PDF or PNG (base64) WITHOUT printing (POST /render).
+
+    Same body as POST /print (`printer` and `type` are ignored: no printer is
+    validated and no backend is touched) plus `format` ("pdf" | "png", default
+    "pdf") and `dpi` (PNG only, 72-600, default 203). A legacy bare list of
+    items renders with default settings.
+    """
+    _printer_name, _job_type, settings, content, _pdf_data = _parse_print_payload(payload)
+    options = payload if isinstance(payload, dict) else {}
+
+    fmt = str(options.get('format') or DEFAULT_RENDER_FORMAT).strip().lower()
+    if fmt not in RENDER_FORMATS:
+        return error_response(f"Unsupported format '{fmt}'. Use 'pdf' or 'png'.")
+    dpi = None
+    if fmt == 'png':
+        try:
+            dpi = _render_dpi(options.get('dpi'))
+        except ValueError as e:
+            return error_response(str(e))
+
+    if not content:
+        return error_response("No content to print.")
+
+    try:
+        rendered = pdf_renderer.render_ticket_pdf(content, _render_options(settings))
+    except ValueError as e:
+        return error_response(str(e))
+
+    output = rendered['pdf_bytes'] if fmt == 'pdf' else pdf_renderer.render_png(rendered['pdf_bytes'], dpi)
+    return success_response(
+        data={
+            'format': fmt,
+            'dpi': dpi,
+            'base64': base64.b64encode(output).decode('ascii'),
+            'page_mm': rendered['page_mm'],
+            'pages': 1,
+            'fonts': rendered['fonts'],
+            'warnings': rendered['warnings'],
+        },
+        message="Ticket rendered.",
     )

@@ -175,6 +175,14 @@ class PrintJobBuilder:
     def add_separator(self):
         self._add_str(escpos.get_separator(self.width))
 
+    def add_spacer(self, lines=1):
+        """Blank vertical space: `lines` newlines (at least 1; unusable values -> 1)."""
+        try:
+            count = max(1, int(lines))
+        except (TypeError, ValueError, OverflowError):
+            count = 1
+        self._add_str('\n' * count)
+
     def add_image(self, image_data):
         # Switch to image mode (tight line height), then restore text.
         #
