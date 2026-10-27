@@ -45,7 +45,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TAG }}
       - id: version
@@ -63,7 +63,7 @@ jobs:
     needs: meta
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TAG }}
       - uses: actions/setup-python@v5
@@ -82,7 +82,7 @@ jobs:
     steps:
       # build-windows.bat está con LF en el repo; cmd.exe necesita CRLF.
       - run: git config --global core.autocrlf true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TAG }}
       - uses: actions/setup-python@v5
@@ -114,7 +114,7 @@ jobs:
     env:
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TAG }}
       - uses: actions/setup-python@v5
@@ -177,7 +177,7 @@ jobs:
     # La distro más vieja disponible: el bundle exige la glibc de la máquina de build.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ env.TAG }}
       - uses: actions/setup-python@v5

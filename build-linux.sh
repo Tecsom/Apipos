@@ -85,7 +85,9 @@ echo "==> Instalando dependencias (requirements-macos.txt + pyinstaller)"
 pip install --upgrade pip >/dev/null
 if [[ -n "$WX_WHEELS" ]]; then
   echo "    wxPython desde $WX_WHEELS"
-  pip install -f "$WX_WHEELS" -r requirements-macos.txt >/dev/null
+  # --prefer-binary: extras.wxpython.org va atrás de PyPI (ej. 4.2.5 vs 4.3.2);
+  # sin esto pip prefiere compilar la versión nueva desde el código fuente.
+  pip install --prefer-binary -f "$WX_WHEELS" -r requirements-macos.txt >/dev/null
 else
   pip install -r requirements-macos.txt >/dev/null
 fi
