@@ -15,6 +15,8 @@
 #   APPLE_TEAM_ID         Team ID (10 caracteres)
 #   APPLE_ID              correo del Apple Developer
 #   APPLE_APP_PASSWORD    App-Specific Password para notarytool
+# Para compilar sin firmar aunque existan los secrets, crea la variable del repo
+# MACOS_UNSIGNED=true (gh variable set MACOS_UNSIGNED --body true).
 
 name: Instaladores
 
@@ -112,7 +114,7 @@ jobs:
     needs: meta
     runs-on: macos-14  # Apple Silicon
     env:
-      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      MACOS_CERT_P12: ${{ vars.MACOS_UNSIGNED != 'true' && secrets.MACOS_CERT_P12 || '' }}
     steps:
       - uses: actions/checkout@v5
         with:
