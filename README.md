@@ -371,15 +371,17 @@ librería a `public/dist/libs/apipos-js/` (y escribe su `VERSION`).
 
 ### Checklist de release (dos repos)
 
-1. Editar `APP_VERSION` en `Apipos/app-meta.env`.
-2. En `apipos-js`: `npm run sync-version`.
-3. `python -m pytest tests/ -q` en Apipos y `npm test` en apipos-js.
-4. Commit `chore: bump version X.Y.Z` en **ambos** repos.
-5. Tag `vX.Y.Z` en **ambos** repos.
-6. `./build-macos.sh` / `build-windows.bat` (en Apipos, cada uno en su SO).
-7. `npm run pack` en apipos-js → `release/tecsom-apipos-js-X.Y.Z.tgz`.
-8. Releases de GitHub `vX.Y.Z`: Apipos con el `.dmg` y `Apipos-Setup.exe`;
-   apipos-js con `tecsom-apipos-js-X.Y.Z.tgz`.
+1. En Apipos: `./build-installers.sh X.Y.Z` (ver
+   [Instaladores en GitHub Actions](#instaladores-en-github-actions-todos-los-so)).
+   Cambia `APP_VERSION`, hace el commit `chore: bump version X.Y.Z`, crea el tag
+   `vX.Y.Z`, compila Windows / macOS / Linux, corre los tests y sube los
+   instaladores al release `vX.Y.Z` (en borrador).
+2. En `apipos-js`: `npm run sync-version`, `npm test`, commit
+   `chore: bump version X.Y.Z` y tag `vX.Y.Z`.
+3. `npm run pack` en apipos-js → `release/tecsom-apipos-js-X.Y.Z.tgz` y subirlo
+   a su release `vX.Y.Z`.
+4. Publicar el release de Apipos (el script lo ofrece al final). Solo entonces
+   el auto-updater de las cajas lo ve.
 
 ---
 
@@ -387,7 +389,40 @@ librería a `public/dist/libs/apipos-js/` (y escribe su `VERSION`).
 
 Hay **scripts de build** que automatizan todo (crear venv, instalar
 dependencias, empaquetar). Cada build debe hacerse **en su propio sistema
-operativo** (PyInstaller no hace cross-compilation entre Windows y macOS).
+operativo** (PyInstaller no hace cross-compilation entre Windows y macOS), así
+que para sacar los tres a la vez se usa GitHub Actions.
+
+### Instaladores en GitHub Actions (todos los SO)
+
+```bash
+./build-installers.sh            # pregunta la versión
+./build-installers.sh 2.0.1      # sube la versión, crea el tag y compila
+./build-installers.sh 2.0.0 --rebuild   # recompila un tag que ya existe
+```
+
+Se corre desde cualquier máquina (Linux, macOS o Git Bash en Windows) y
+necesita [GitHub CLI](https://cli.github.com) con sesión (`gh auth login`). El
+script escribe la versión en `app-meta.env`, hace commit, crea el tag `vX.Y.Z` y
+lo sube. Ese push dispara
+[.github/workflows/build-installers.yml](.github/workflows/build-installers.yml),
+que compila en paralelo:
+
+| Runner          | Script               | Archivo en el release                 |
+|-----------------|----------------------|---------------------------------------|
+| `windows-2022`  | `build-windows.bat`  | `Apipos-Setup.exe`                    |
+| `macos-14` (arm64) | `build-macos.sh` / `build_macos_signed.template.sh` | `Apipos-X.Y.Z-arm64.dmg` |
+| `ubuntu-22.04`  | `build-linux.sh`     | `Apipos-X.Y.Z-linux-x86_64.tar.gz`    |
+
+Además corre los tests. Si todo pasa, sube los tres archivos al release
+`vX.Y.Z` **en borrador** y el script pregunta si publicarlo. Mientras siga en
+borrador, `releases/latest` no lo muestra, así que las cajas no se actualizan.
+
+> **Firma de macOS:** sin secrets el `.dmg` sale sin firmar (Gatekeeper lo
+> bloquea al descargarlo). Para firmarlo y notarizarlo en CI, agrega en
+> *Settings → Secrets and variables → Actions* del repo: `MACOS_CERT_P12`
+> (el .p12 del "Developer ID Application" en base64: `base64 -i cert.p12`),
+> `MACOS_CERT_PASSWORD`, `MACOS_CERT_NAME`, `APPLE_TEAM_ID`, `APPLE_ID` y
+> `APPLE_APP_PASSWORD` (App-Specific Password).
 
 > **Nombre, versión y publisher** se editan en un solo lugar:
 > [app-meta.env](app-meta.env). Lo leen ambos scripts de build, los `.spec` y el
@@ -431,16 +466,45 @@ genera `dist\Apipos.exe` (app sin consola, vive en la bandeja). Si tienes
 
 > Descarga Inno Setup: https://jrsoftware.org/isdl.php
 
+### Linux — `./build-linux.sh`
+
+```bash
+./build-linux.sh          # pregunta la versión
+./build-linux.sh 2.0.1
+```
+
+Crea/usa `.venv`, instala dependencias (wxPython desde
+`extras.wxpython.org` para tu distro), empaqueta con
+[apipos-linux.spec](apipos-linux.spec) y genera
+`dist/Apipos-<ver>-linux-<arch>.tar.gz`. Para instalarlo en una caja:
+
+```bash
+tar xzf Apipos-2.0.1-linux-x86_64.tar.gz
+./Apipos-2.0.1-linux-x86_64/install.sh          # --uninstall para quitarlo
+```
+
+`install.sh` ([installer-linux.sh](installer-linux.sh)) instala para el usuario
+en `~/.local/share/Apipos`, agrega el lanzador y el inicio automático
+(`~/.config/autostart`), y arranca la app. El auto-updater no instala solo en
+Linux: abre la página del release.
+
+> El bundle depende de la glibc de la máquina donde se compiló. CI compila en
+> Ubuntu 22.04, así que corre en esa versión o más nueva.
+
 ### Resumen de archivos de build
 
 | Archivo                  | Plataforma | Salida                                   |
 |--------------------------|------------|------------------------------------------|
-| `app-meta.env`           | ambos      | nombre/versión/publisher (fuente única)  |
+| `app-meta.env`           | todas      | nombre/versión/publisher (fuente única)  |
+| `build-installers.sh`    | cualquiera | dispara los 3 builds en GitHub Actions + release |
 | `build-macos.sh`         | macOS      | `dist/Apipos.app` + `Apipos-<ver>-<arch>.dmg` |
 | `build-windows.bat`      | Windows    | `dist\Apipos.exe` (+ `Apipos-Setup.exe`) |
+| `build-linux.sh`         | Linux      | `dist/Apipos-<ver>-linux-<arch>.tar.gz`  |
 | `apipos-macos.spec`      | macOS      | spec de PyInstaller (.app)               |
 | `apipos.spec`            | Windows    | spec de PyInstaller (.exe)               |
+| `apipos-linux.spec`      | Linux      | spec de PyInstaller (carpeta)            |
 | `installer-windows.iss`  | Windows    | script de Inno Setup (instalador)        |
+| `installer-linux.sh`     | Linux      | `install.sh` que va dentro del .tar.gz   |
 
 > También puedes invocar PyInstaller manualmente: `pyinstaller apipos-macos.spec`
 > o `pyinstaller apipos.spec`.

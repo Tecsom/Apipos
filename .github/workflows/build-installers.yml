@@ -1,0 +1,223 @@
+# Compila los instaladores de Apipos en los tres sistemas y los sube a un
+# Release (borrador) de GitHub:
+#   - Windows x64       -> Apipos-Setup.exe               (build-windows.bat + Inno Setup)
+#   - macOS arm64       -> Apipos-<ver>-arm64.dmg          (build-macos.sh, o firmado si hay secrets)
+#   - Linux x86_64      -> Apipos-<ver>-linux-x86_64.tar.gz (build-linux.sh)
+#
+# Se dispara al subir un tag vX.Y.Z (lo hace ./build-installers.sh) o a mano
+# desde Actions -> "Instaladores" -> Run workflow, indicando un tag existente.
+#
+# Firma de macOS (opcional): si existen estos secrets del repo, el .dmg se firma
+# y notariza con build_macos_signed.template.sh; si no, sale sin firmar.
+#   MACOS_CERT_P12        certificado "Developer ID Application" exportado a .p12, en base64
+#   MACOS_CERT_PASSWORD   contraseña del .p12
+#   MACOS_CERT_NAME       identity exacto, ej. "Developer ID Application: Tecsom (XXXXXXXXXX)"
+#   APPLE_TEAM_ID         Team ID (10 caracteres)
+#   APPLE_ID              correo del Apple Developer
+#   APPLE_APP_PASSWORD    App-Specific Password para notarytool
+
+name: Instaladores
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag a compilar (ej. v2.0.1). Debe existir y coincidir con app-meta.env.'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  PYTHON_VERSION: '3.12'
+
+concurrency:
+  group: installers-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Versión
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - id: version
+        name: Verificar que el tag coincide con app-meta.env
+        run: |
+          version="$(grep -E '^APP_VERSION=' app-meta.env | head -n1 | cut -d= -f2-)"
+          if [[ "v${version}" != "$TAG" ]]; then
+            echo "::error::El tag $TAG no coincide con APP_VERSION=${version} de app-meta.env"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  tests:
+    name: Tests
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Sin wxPython: los tests no tocan la bandeja y en Linux habría que compilarlo.
+      - run: |
+          grep -v -i '^wxPython' requirements.txt > "$RUNNER_TEMP/requirements-tests.txt"
+          pip install -r "$RUNNER_TEMP/requirements-tests.txt" pytest
+      - run: python -m pytest tests/ -q
+
+  windows:
+    name: Windows x64
+    needs: meta
+    runs-on: windows-2022
+    steps:
+      # build-windows.bat está con LF en el repo; cmd.exe necesita CRLF.
+      - run: git config --global core.autocrlf true
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+      - name: Compilar
+        shell: cmd
+        run: build-windows.bat ${{ needs.meta.outputs.version }}
+      - name: Verificar instalador
+        shell: bash
+        run: test -f dist/Apipos-Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/Apipos-Setup.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS arm64
+    needs: meta
+    runs-on: macos-14  # Apple Silicon
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Compilar (sin firmar)
+        if: env.MACOS_CERT_P12 == ''
+        run: ./build-macos.sh arm64 "${{ needs.meta.outputs.version }}"
+
+      - name: Importar certificado y perfil de notarización
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/apipos.keychain-db"
+          kc_pass="$(openssl rand -hex 16)"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kc_pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$kc_pass" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -P "$MACOS_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$kc_pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -s "$keychain"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          xcrun notarytool store-credentials apipos-notary \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD"
+
+      - name: Compilar, firmar y notarizar
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          CERT: ${{ secrets.MACOS_CERT_NAME }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PROFILE: apipos-notary
+        # El template pregunta los datos con `read`; con Enter toma los de env.
+        run: printf '\n%.0s' {1..10} | ./build_macos_signed.template.sh arm64
+
+      - name: Reunir .dmg
+        run: |
+          mkdir -p out
+          mv ./*.dmg dist/*.dmg out/ 2>/dev/null || true
+          ls -la out
+          test -n "$(ls out/*-arm64.dmg 2>/dev/null)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/*.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64
+    needs: meta
+    # La distro más vieja disponible: el bundle exige la glibc de la máquina de build.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Librerías de sistema para wxPython (GTK3)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-0 libnotify4 libsdl2-2.0-0 libxtst6 libsm6 libjpeg8 libtiff5
+      - name: Compilar
+        run: ./build-linux.sh "${{ needs.meta.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/Apipos-*-linux-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Subir al Release
+    needs: [meta, tests, windows, macos, linux]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Crear (borrador) o actualizar el release
+        run: |
+          ls -la out
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # Borrador: el auto-updater (releases/latest) no lo ve hasta publicarlo.
+            gh release create "$TAG" --draft --verify-tag \
+              --title "Apipos ${{ needs.meta.outputs.version }}" --generate-notes
+          fi
+          gh release upload "$TAG" out/* --clobber
+          echo "### Release $TAG" >> "$GITHUB_STEP_SUMMARY"
+          gh release view "$TAG" --json url,isDraft,assets \
+            -q '"\(.url) (borrador: \(.isDraft))\n\n" + ([.assets[].name] | map("- " + .) | join("\n"))' \
+            >> "$GITHUB_STEP_SUMMARY"
