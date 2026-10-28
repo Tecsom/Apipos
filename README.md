@@ -69,6 +69,8 @@ src/
 │   ├── windows_backend.py     #   Windows (win32print / RAW spooler)
 │   └── macos_backend.py       #   macOS / Linux (CUPS: lp / lpstat)
 ├── tray.py                    # Ícono de bandeja (wxPython) — multiplataforma
+├── updater.py                 # Auto-updater vía GitHub Releases (solo stdlib)
+├── autostart.py               # Inicio automático al iniciar sesión
 └── utils/
     └── response.py            # Helpers de respuesta genérica
 ```
@@ -368,6 +370,35 @@ librería a `public/dist/libs/apipos-js/` (y escribe su `VERSION`).
   Nunca bloquea la impresión.
 - El front (ranitas-pdv) y el Apipos instalado en las cajas deben ir en la misma
   versión.
+
+### Actualizaciones automáticas
+
+Desde la bandeja, **Buscar actualizaciones** consulta el último release de
+GitHub (`releases/latest`); Apipos también lo revisa en silencio unos segundos
+después de arrancar. Si hay una versión más nueva, el diálogo muestra las
+novedades y avisa que Apipos se cerrará; al aceptar, descarga el instalador de
+la plataforma y lo abre.
+
+- **Apipos se cierra solo** al abrir el instalador (mismo camino que *Salir*),
+  para que la versión vieja no siga corriendo mientras se reemplaza. Si el
+  instalador no se puede abrir (p. ej. se cancela el UAC de Windows) se muestra
+  el error y Apipos sigue abierto.
+- **Windows:** el Setup (`Apipos-Setup.exe`) cierra cualquier `Apipos.exe` que
+  siga corriendo antes de copiar archivos (`PrepareToInstall` + `taskkill`; si
+  no logra cerrarlo en ~10 s se detiene con un mensaje), no usa el reinicio del
+  Restart Manager y la casilla final **Ejecutar Apipos ahora** arranca la
+  versión nueva. El desinstalador también cierra la app primero.
+- **macOS:** se monta el `.dmg`; el usuario arrastra la app a Aplicaciones y la
+  abre.
+- Si se cancela el instalador después de que Apipos se cerró, queda cerrado
+  hasta abrirlo desde el menú Inicio / Aplicaciones o hasta volver a iniciar
+  sesión (inicio automático).
+- **Una sola instancia por usuario:** una segunda (doble clic en el acceso
+  directo, inicio automático, etc.) sale en silencio sin levantar el API. El
+  modo headless (`APIPOS_NO_TRAY=1`) no tiene ese guard.
+
+> El `.exe` de Windows es *onefile* de PyInstaller, así que **una** instancia se
+> ve como **dos** procesos `Apipos.exe` en el Administrador de tareas.
 
 ### Checklist de release (dos repos)
 

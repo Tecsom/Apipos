@@ -28,6 +28,11 @@ Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
 WizardStyle=modern
+; Apipos is a tray app that keeps {app}\Apipos.exe in use. PrepareToInstall
+; ([Code]) closes it before any file is copied; CloseApplications stays as the
+; fallback. RestartApplications=no: the only new instance is the [Run] entry.
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -49,3 +54,50 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Ejecutar {#AppName} ahora"; \
   Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; The uninstaller hits the same "file in use" problem: close the app first.
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM {#AppExe}"; \
+  Flags: runhidden; RunOnceId: "CloseApp"
+
+[Code]
+// Apipos must not be running while its .exe is replaced; otherwise the old
+// instance survives next to the one started by [Run] after the install.
+
+function AppIsRunning(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  // `find` exits with 0 only when the image name appears in tasklist's output.
+  Result := Exec(ExpandConstant('{cmd}'),
+    '/C tasklist /FI "IMAGENAME eq {#AppExe}" | find /I "{#AppExe}" >nul',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+procedure KillApp();
+var
+  ResultCode: Integer;
+begin
+  // /T also kills the PyInstaller onefile child process; /F because the tray
+  // process has no visible window to close gracefully.
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM {#AppExe}',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Attempt: Integer;
+begin
+  Result := '';
+  if not AppIsRunning() then
+    Exit;
+  KillApp();
+  // taskkill returns before the processes are fully gone: poll up to ~10 s.
+  for Attempt := 1 to 40 do
+  begin
+    if not AppIsRunning() then
+      Exit;
+    Sleep(250);
+  end;
+  Result := 'No se pudo cerrar {#AppName}. Ciérralo desde la bandeja del sistema (Salir) y vuelve a intentar.';
+end;

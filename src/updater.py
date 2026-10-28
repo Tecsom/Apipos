@@ -7,9 +7,10 @@ bundle.
 Flow:
   1. check_for_update()  -> queries the latest release and compares versions.
   2. download_asset()    -> downloads the matching installer to a temp file.
-  3. launch_installer()  -> opens it so the user completes the install
-                            (mounts the .dmg on macOS / runs the Setup.exe on
-                            Windows). Signed/notarized installers keep working.
+  3. launch_installer()  -> opens it (mounts the .dmg on macOS / runs the
+                            Setup.exe on Windows) and the app quits; on
+                            Windows the Setup also closes any instance still
+                            running. Signed/notarized installers keep working.
 """
 import json
 import os
@@ -117,12 +118,21 @@ def download_asset(asset, progress=None):
 
 
 def launch_installer(path):
-    """Open the downloaded installer so the user can complete the update."""
+    """Open the downloaded installer; return True when one was launched.
+
+    Returns False when the platform has no installer flow (the releases page
+    is opened instead). On True the caller is expected to quit the app: the
+    installer replaces this executable, and on Windows it also closes any
+    instance still running (see installer-windows.iss), so that exactly one
+    Apipos is left after the update.
+    """
     if sys.platform == 'darwin':
         import subprocess
         subprocess.Popen(['open', path])     # mounts the .dmg
-    elif sys.platform == 'win32':
+        return True
+    if sys.platform == 'win32':
         os.startfile(path)                   # runs the Setup.exe  # noqa: S606
-    else:
-        import webbrowser
-        webbrowser.open(RELEASES_PAGE)
+        return True
+    import webbrowser
+    webbrowser.open(RELEASES_PAGE)
+    return False

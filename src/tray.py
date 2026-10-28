@@ -2,15 +2,18 @@
 
 Shows the port the API is running on and the app version. Printer selection is
 handled entirely through the API (`GET/POST /printers...`), so the tray only
-displays status, checks for updates, and lets the user quit the app.
+displays status, checks for updates, and lets the user quit the app. When an
+update is accepted the tray quits the app as soon as the installer is launched.
+`start_tray` also guarantees a single running instance per user.
 """
+import os
 import threading
 import webbrowser
 
 import wx
 import wx.adv
 
-from src.config import TRAY_ICON, TRAY_TOOLTIP, FLASK_PORT, APP_NAME, APP_VERSION
+from src.config import TRAY_ICON, TRAY_TOOLTIP, FLASK_PORT, APP_NAME, APP_VERSION, APPDATA_DIR
 from src import updater
 
 HEALTH_URL = f'http://localhost:{FLASK_PORT}/health'
@@ -120,7 +123,7 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         message = f'Hay una nueva versión disponible: v{info["version"]}.\n'
         if notes:
             message += f'\nNovedades:\n{notes}\n'
-        message += '\n¿Descargar e instalar ahora?'
+        message += f'\n¿Descargar e instalar ahora?\n{APP_NAME} se cerrará para instalar la actualización.'
 
         if wx.MessageBox(message, APP_NAME, wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
             return
@@ -159,24 +162,51 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         threading.Thread(target=worker, daemon=True).start()
 
     def _installer_ready(self, path):
-        updater.launch_installer(path)
-        wx.MessageBox(
-            'Se abrió el instalador de la nueva versión.\n'
-            f'Cierra {APP_NAME} para completar la actualización.',
-            APP_NAME, wx.OK | wx.ICON_INFORMATION,
-        )
+        try:
+            launched = updater.launch_installer(path)
+        except OSError as exc:  # e.g. the user declined the UAC prompt
+            wx.MessageBox(
+                f'No se pudo abrir el instalador:\n{exc}',
+                APP_NAME, wx.OK | wx.ICON_ERROR,
+            )
+            return
+        if launched:
+            # The installer replaces this executable: quit now so the old
+            # instance is gone before the new one starts (see TASK-007).
+            self.quit_app()
 
-    def on_exit(self, event):
+    def quit_app(self):
+        """Remove the tray icon and end the MainLoop (the process exits)."""
         wx.CallAfter(self.Destroy)
         # Closing the anchor frame ends the MainLoop and stops the process.
         if self._frame is not None:
             wx.CallAfter(self._frame.Close)
 
+    def on_exit(self, event):
+        self.quit_app()
 
-def start_tray():
-    """Start the wxPython tray icon event loop (runs on the main thread)."""
+
+def start_tray(on_ready=None):
+    """Start the wxPython tray icon event loop (runs on the main thread).
+
+    Enforces one instance per user: when another Apipos is already running
+    this returns False right away without calling `on_ready`. Otherwise
+    `on_ready()` (if given) runs before the icon appears and the loop starts.
+    """
     app = wx.App(False)
+    os.makedirs(APPDATA_DIR, exist_ok=True)  # lock file dir on macOS/Linux
+    # Kept as an attribute so it outlives MainLoop: while the checker exists,
+    # IsAnotherRunning() in other processes returns True.
+    app.single_instance = wx.SingleInstanceChecker(
+        f'{APP_NAME}-{wx.GetUserId()}.lock', APPDATA_DIR
+    )
+    if app.single_instance.IsAnotherRunning():
+        print(f'{APP_NAME} ya está corriendo; esta instancia se cierra.')
+        return False
+    if on_ready is not None:
+        on_ready()
     # Created but never Show()n -> invisible window that keeps MainLoop alive.
     frame = wx.Frame(None, title=TRAY_TOOLTIP)
     TaskBarIcon(frame)
     app.MainLoop()
+    return True
