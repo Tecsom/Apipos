@@ -190,6 +190,10 @@ echo "==> Instalando dependencias (requirements-macos.txt + pyinstaller)"
 pip install --upgrade pip >/dev/null
 pip install -r requirements-macos.txt >/dev/null
 pip install pyinstaller >/dev/null
+# What the app imports at startup: if something is missing the bundle builds
+# fine but closes as soon as it is opened (TASK-008).
+python -c "import flask, flask_cors, PIL, wx, fitz, fontTools" \
+  || { echo "ERROR: faltan dependencias en $VENV aunque pip terminó; bórralo y vuelve a correr." >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # 4. Clean previous artifacts

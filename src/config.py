@@ -44,6 +44,9 @@ GITHUB_REPO = 'Tecsom/Apipos'
 APPDATA_DIR = os.path.join(os.getenv('APPDATA') or os.path.expanduser('~'), 'Apipos')
 PICKLE_FILE = os.path.join(APPDATA_DIR, 'selected_printer.pkl')
 
+# App log (src/app_log.py). APIPOS_LOG_FILE overrides it (tests, CI smoke test).
+LOG_FILE = os.getenv('APIPOS_LOG_FILE') or os.path.join(APPDATA_DIR, 'apipos.log')
+
 TRAY_TOOLTIP = APP_NAME
 TRAY_ICON = resource_path(os.path.join('assets', 'app-icon.png'))
 

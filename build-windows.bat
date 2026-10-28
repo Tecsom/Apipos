@@ -57,16 +57,31 @@ if not "!APP_VERSION!"=="%NEW_VERSION%" (
 echo ==^> %APP_NAME% v%APP_VERSION% ^(%APP_PUBLISHER%^)
 
 REM --- 1. Virtual environment + dependencies --------------------------------
-if not exist "%VENV%" (
+if not exist "%VENV%\Scripts\python.exe" (
   echo ==^> Creando entorno virtual en %VENV%
   python -m venv "%VENV%"
+  if errorlevel 1 (
+    echo ERROR: no se pudo crear el entorno virtual %VENV% con "python".
+    exit /b 1
+  )
 )
 call "%VENV%\Scripts\activate.bat"
 
 echo ==^> Instalando dependencias ^(requirements-windows.txt + pyinstaller^)
 python -m pip install --upgrade pip >nul
+if errorlevel 1 goto :pip_failed
 pip install -r requirements-windows.txt >nul
+if errorlevel 1 goto :pip_failed
 pip install pyinstaller >nul
+if errorlevel 1 goto :pip_failed
+
+REM Lo que la app importa al arrancar: si falta algo, el .exe se compila igual
+REM pero se cierra en cuanto se abre (ver TASK-008).
+python -c "import flask, flask_cors, PIL, wx, fitz, fontTools, win32print"
+if errorlevel 1 (
+  echo ERROR: faltan dependencias en %VENV% aunque pip termino. Borra %VENV% y vuelve a correr este script.
+  exit /b 1
+)
 
 REM --- 2. Clean previous artifacts ------------------------------------------
 echo ==^> Limpiando build\ y dist\
@@ -99,6 +114,10 @@ if not defined ISCC_CMD if exist "%ProgramFiles%\Inno Setup 5\ISCC.exe" set "ISC
 if defined ISCC_CMD (
   echo ==^> Usando Inno Setup: !ISCC_CMD!
   "!ISCC_CMD!" /DAppName=%APP_NAME% /DAppVersion=%APP_VERSION% /DAppPublisher=%APP_PUBLISHER% installer-windows.iss
+  if errorlevel 1 (
+    echo ERROR: Inno Setup no pudo compilar installer-windows.iss ^(revisa el error de arriba^).
+    exit /b 1
+  )
   echo.
   echo Instalador creado: dist\%APP_NAME%-Setup.exe
 ) else (
@@ -111,3 +130,8 @@ if defined ISCC_CMD (
 echo.
 echo Listo.
 endlocal
+exit /b 0
+
+:pip_failed
+echo ERROR: fallo pip ^(revisa el error de arriba^). No se compila un .exe incompleto.
+exit /b 1

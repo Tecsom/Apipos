@@ -7,6 +7,8 @@
 # Se dispara al subir un tag vX.Y.Z (lo hace ./build-installers.sh) o a mano
 # desde Actions -> "Instaladores" -> Run workflow, indicando un tag existente.
 #
+# Cada job prueba su binario con scripts/smoke_binary.py antes de subirlo.
+#
 # Firma de macOS (opcional): si existen estos secrets del repo, el .dmg se firma
 # y notariza con build_macos_signed.template.sh; si no, sale sin firmar.
 #   MACOS_CERT_P12        certificado "Developer ID Application" exportado a .p12, en base64
@@ -100,6 +102,9 @@ jobs:
       - name: Compilar
         shell: cmd
         run: build-windows.bat ${{ needs.meta.outputs.version }}
+      - name: Probar el ejecutable (smoke test)
+        shell: bash
+        run: python scripts/smoke_binary.py --version "${{ needs.meta.outputs.version }}" -- dist/Apipos.exe
       - name: Verificar instalador
         shell: bash
         run: test -f dist/Apipos-Setup.exe
@@ -161,6 +166,9 @@ jobs:
         # El template pregunta los datos con `read`; con Enter toma los de env.
         run: printf '\n%.0s' {1..10} | ./build_macos_signed.template.sh arm64
 
+      - name: Probar la app (smoke test)
+        run: python scripts/smoke_binary.py --version "${{ needs.meta.outputs.version }}" -- dist/Apipos.app/Contents/MacOS/Apipos
+
       - name: Reunir .dmg
         run: |
           mkdir -p out
@@ -189,9 +197,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgtk-3-0 libnotify4 libsdl2-2.0-0 libxtst6 libsm6 libjpeg8 libtiff5
+            libgtk-3-0 libnotify4 libsdl2-2.0-0 libxtst6 libsm6 libjpeg8 libtiff5 \
+            fonts-dejavu-core
       - name: Compilar
         run: ./build-linux.sh "${{ needs.meta.outputs.version }}"
+      - name: Probar el ejecutable (smoke test)
+        run: python scripts/smoke_binary.py --version "${{ needs.meta.outputs.version }}" -- dist/Apipos-*-linux-*/Apipos/Apipos
       - uses: actions/upload-artifact@v4
         with:
           name: linux

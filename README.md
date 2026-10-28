@@ -71,6 +71,7 @@ src/
 ├── tray.py                    # Ícono de bandeja (wxPython) — multiplataforma
 ├── updater.py                 # Auto-updater vía GitHub Releases (solo stdlib)
 ├── autostart.py               # Inicio automático al iniciar sesión
+├── app_log.py                 # Log de la app (apipos.log)
 └── utils/
     └── response.py            # Helpers de respuesta genérica
 ```
@@ -400,6 +401,29 @@ la plataforma y lo abre.
 > El `.exe` de Windows es *onefile* de PyInstaller, así que **una** instancia se
 > ve como **dos** procesos `Apipos.exe` en el Administrador de tareas.
 
+### Logs y diagnóstico
+
+Apipos escribe un archivo de log, porque el `.exe` de Windows no tiene consola
+y sin él cualquier error de arranque se perdería.
+
+- **`apipos.log`** está junto a los datos de la app: `%APPDATA%\Apipos\apipos.log`
+  en Windows, `~/Apipos/apipos.log` en macOS/Linux. Al arrancar, si pesa más de
+  1 MB se renombra a `apipos.log.1` (reemplaza al anterior) y se empieza uno nuevo.
+- **Qué registra:** el arranque (versión, exe, pid, SO), todo lo que la app
+  imprime, los tracebacks (también de hilos y de wx), los errores al cargar
+  dependencias (`No se pudo cargar Apipos`), los crashes nativos
+  (`faulthandler`), la instancia única, las actualizaciones y el cierre. Al
+  terminar escribe `Apipos terminó`: si esa línea falta, el proceso murió por
+  `kill`/`taskkill` o por un crash. **No** registra cada petición HTTP.
+- **Abrir la carpeta:** en la bandeja, **Abrir carpeta de logs**.
+- **Instalador de Windows:** al terminar deja una copia del log de Inno Setup en
+  `C:\Program Files\Apipos\install.log` (incluye si tuvo que cerrar Apipos). El
+  log original, `Setup Log *.txt`, queda en `%TEMP%`. Para generar uno a mano:
+  `Apipos-Setup.exe /LOG="C:\ruta\setup.log"`.
+- **`APIPOS_LOG_FILE=/ruta/archivo.log`** cambia la ruta del log (pruebas, CI).
+
+Cuando algo falle, manda `apipos.log`, `apipos.log.1` (si existe) e `install.log`.
+
 ### Checklist de release (dos repos)
 
 1. En Apipos: `./build-installers.sh X.Y.Z` (ver
@@ -448,6 +472,25 @@ Además corre los tests. Si todo pasa, sube los tres archivos al release
 `vX.Y.Z` **en borrador** y el script pregunta si publicarlo. Mientras siga en
 borrador, `releases/latest` no lo muestra, así que las cajas no se actualizan.
 
+Cada job prueba además su binario con
+[scripts/smoke_binary.py](scripts/smoke_binary.py) antes de subirlo: lo arranca
+sin bandeja (headless) y comprueba `/health` (con la versión del tag), `/fonts`
+y `/render` en PDF y PNG. Si algo falla, el job falla, imprime la salida del
+proceso y su `apipos.log`, y no se sube nada al release.
+
+Para correrlo a mano (solo biblioteca estándar de Python), con `X.Y.Z` igual al
+`APP_VERSION` de [app-meta.env](app-meta.env):
+
+```bash
+python scripts/smoke_binary.py --version X.Y.Z -- dist/Apipos.exe                        # Windows
+python scripts/smoke_binary.py --version X.Y.Z -- dist/Apipos.app/Contents/MacOS/Apipos  # macOS
+python scripts/smoke_binary.py --version X.Y.Z -- .venv/bin/python apipos.py             # desde el código
+```
+
+Termina con `SMOKE OK` (código 0) o `SMOKE FAIL: <motivo>` (código 1). El puerto
+`50432` debe estar libre: cierra el Apipos que tengas corriendo antes de
+probarlo.
+
 > **Firma de macOS:** sin secrets el `.dmg` sale sin firmar (Gatekeeper lo
 > bloquea al descargarlo). Para firmarlo y notarizarlo en CI, agrega en
 > *Settings → Secrets and variables → Actions* del repo: `MACOS_CERT_P12`
@@ -474,6 +517,9 @@ genera:
 - `dist/Apipos.app` (app de barra de menú, sin ícono en el Dock por `LSUIElement`)
 - `Apipos-<arch>.dmg` (instalador para distribuir)
 
+El script se detiene si `pip` falla o si al `.venv` le falta algo que la app
+importa al arrancar; en ese caso borra `.venv` y vuelve a correrlo.
+
 > Construir para una arquitectura distinta a la del equipo (o `universal2`)
 > requiere un Python universal2 y wheels universal2 de todas las dependencias. Si
 > falla, compila de forma nativa en la Mac correspondiente.
@@ -495,6 +541,10 @@ genera `dist\Apipos.exe` (app sin consola, vive en la bandeja). Si tienes
 [installer-windows.iss](installer-windows.iss) y produce `dist\Apipos-Setup.exe`
 (instalador con accesos directos, inicio automático y desinstalador).
 
+El script se detiene (código 1) si `pip` falla o si al `.venv` le falta algo que
+la app importa al arrancar; antes generaba un `.exe` que se cerraba al abrirlo.
+En ese caso borra `.venv` y vuelve a correr `build-windows.bat`.
+
 > Descarga Inno Setup: https://jrsoftware.org/isdl.php
 
 ### Linux — `./build-linux.sh`
@@ -507,7 +557,9 @@ genera `dist\Apipos.exe` (app sin consola, vive en la bandeja). Si tienes
 Crea/usa `.venv`, instala dependencias (wxPython desde
 `extras.wxpython.org` para tu distro), empaqueta con
 [apipos-linux.spec](apipos-linux.spec) y genera
-`dist/Apipos-<ver>-linux-<arch>.tar.gz`. Para instalarlo en una caja:
+`dist/Apipos-<ver>-linux-<arch>.tar.gz`. Se detiene si `pip` falla o si al
+`.venv` le falta algo que la app importa al arrancar (borra `.venv` y vuelve a
+correrlo). Para instalarlo en una caja:
 
 ```bash
 tar xzf Apipos-2.0.1-linux-x86_64.tar.gz

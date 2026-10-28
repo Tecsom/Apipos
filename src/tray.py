@@ -4,6 +4,7 @@ Shows the port the API is running on and the app version. Printer selection is
 handled entirely through the API (`GET/POST /printers...`), so the tray only
 displays status, checks for updates, and lets the user quit the app. When an
 update is accepted the tray quits the app as soon as the installer is launched.
+The "Abrir carpeta de logs" menu item opens the folder that holds apipos.log.
 `start_tray` also guarantees a single running instance per user.
 """
 import os
@@ -15,6 +16,7 @@ import wx.adv
 
 from src.config import TRAY_ICON, TRAY_TOOLTIP, FLASK_PORT, APP_NAME, APP_VERSION, APPDATA_DIR
 from src import updater
+from src.app_log import log, open_log_folder
 
 HEALTH_URL = f'http://localhost:{FLASK_PORT}/health'
 
@@ -51,6 +53,7 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         menu.AppendSeparator()
         create_menu_item(menu, 'Ver estado', self.on_open_health)
         create_menu_item(menu, 'Buscar actualizaciones', self.on_check_updates)
+        create_menu_item(menu, 'Abrir carpeta de logs', self.on_open_logs)
         create_menu_item(menu, 'Salir', self.on_exit)
         return menu
 
@@ -70,6 +73,16 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
     def on_open_health(self, event):
         self.open_health()
 
+    def on_open_logs(self, event):
+        try:
+            open_log_folder()
+        except OSError as exc:
+            log.warning('No se pudo abrir la carpeta de logs: %s', exc)
+            wx.MessageBox(
+                f'No se pudo abrir la carpeta de logs:\n{exc}',
+                APP_NAME, wx.OK | wx.ICON_WARNING,
+            )
+
     def open_health(self):
         """Open the API health endpoint in the default browser."""
         webbrowser.open(HEALTH_URL)
@@ -88,14 +101,17 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         if self._checking:
             return
         self._checking = True
+        log.info('Buscando actualizaciones (%s)', 'automático' if silent else 'manual')
         threading.Thread(
-            target=self._check_worker, args=(silent,), daemon=True
+            target=self._check_worker, args=(silent,), daemon=True,
+            name='update-check',
         ).start()
 
     def _check_worker(self, silent):
         try:
             info = updater.check_for_update()
         except Exception as exc:  # noqa: BLE001 - report instead of crashing
+            log.warning('No se pudo verificar actualizaciones: %s', exc)
             wx.CallAfter(self._on_check_done, None, str(exc), silent)
             return
         wx.CallAfter(self._on_check_done, info, None, silent)
@@ -110,6 +126,7 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
                 )
             return
         if info is None:
+            log.info('Sin actualizaciones: v%s es la última', APP_VERSION)
             if not silent:
                 wx.MessageBox(
                     f'{APP_NAME} está actualizado (v{APP_VERSION}).',
@@ -124,8 +141,10 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         if notes:
             message += f'\nNovedades:\n{notes}\n'
         message += f'\n¿Descargar e instalar ahora?\n{APP_NAME} se cerrará para instalar la actualización.'
+        log.info('Versión nueva disponible: v%s', info['version'])
 
         if wx.MessageBox(message, APP_NAME, wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
+            log.info('El usuario pospuso la actualización a v%s', info['version'])
             return
 
         asset = info.get('asset')
@@ -143,12 +162,15 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
 
         def worker():
             try:
+                log.info('Descargando %s', asset['name'])
+
                 def on_progress(read, total):
                     pct = int(read * 100 / total) if total else 0
                     wx.CallAfter(progress.Update, pct)
 
                 path = updater.download_asset(asset, progress=on_progress)
             except Exception as exc:  # noqa: BLE001
+                log.error('Falló la descarga de %s: %s', asset['name'], exc)
                 wx.CallAfter(progress.Destroy)
                 wx.CallAfter(
                     wx.MessageBox,
@@ -156,15 +178,18 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
                     APP_NAME, wx.OK | wx.ICON_ERROR,
                 )
                 return
+            log.info('Instalador descargado en %s', path)
             wx.CallAfter(progress.Destroy)
             wx.CallAfter(self._installer_ready, path)
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=worker, daemon=True, name='update-download').start()
 
     def _installer_ready(self, path):
+        log.info('Abriendo el instalador %s', path)
         try:
             launched = updater.launch_installer(path)
         except OSError as exc:  # e.g. the user declined the UAC prompt
+            log.error('No se pudo abrir el instalador: %s', exc)
             wx.MessageBox(
                 f'No se pudo abrir el instalador:\n{exc}',
                 APP_NAME, wx.OK | wx.ICON_ERROR,
@@ -173,16 +198,19 @@ class TaskBarIcon(wx.adv.TaskBarIcon):
         if launched:
             # The installer replaces this executable: quit now so the old
             # instance is gone before the new one starts (see TASK-007).
+            log.info('Instalador abierto; Apipos se cierra para actualizarse')
             self.quit_app()
 
     def quit_app(self):
         """Remove the tray icon and end the MainLoop (the process exits)."""
+        log.info('Cerrando Apipos')
         wx.CallAfter(self.Destroy)
         # Closing the anchor frame ends the MainLoop and stops the process.
         if self._frame is not None:
             wx.CallAfter(self._frame.Close)
 
     def on_exit(self, event):
+        log.info('El usuario eligió Salir')
         self.quit_app()
 
 
@@ -203,6 +231,7 @@ def start_tray(on_ready=None):
     if app.single_instance.IsAnotherRunning():
         print(f'{APP_NAME} ya está corriendo; esta instancia se cierra.')
         return False
+    log.info('Instancia única: arrancando la bandeja')
     if on_ready is not None:
         on_ready()
     # Created but never Show()n -> invisible window that keeps MainLoop alive.
