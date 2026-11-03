@@ -319,7 +319,7 @@ curl http://localhost:50432/health
 
 Las pruebas unitarias viven en `tests/` (separadas de `src/`) y usan **pytest**
 con un backend de impresora falso, así que no necesitan impresora ni el servidor
-levantado. Las convenciones están en `docs/TESTING.md`.
+levantado. Las convenciones están en `agent-docs/TESTING.md`.
 
 ```bash
 source .venv/bin/activate
