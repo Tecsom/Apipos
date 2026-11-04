@@ -421,7 +421,7 @@ def test_print_with_pdf_renderer_returns_200_and_sends_raster_job(client, fake_b
     assert data["width_dots"] == 576
     assert data["drawer_opened"] is True
     assert len(fake_backend.raw_jobs) == 2
-    assert fake_backend.raw_jobs[0][1].endswith(FEED_AND_CUT)
+    assert fake_backend.raw_jobs[0][1].endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
     assert fake_backend.raw_jobs[1] == ("TestPrinter", OPEN_DRAWER)
 
 

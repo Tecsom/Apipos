@@ -371,6 +371,15 @@ class TestPrintRawImage:
         assert data.index(GS_V_0) < data.index(b"after")
         assert data.endswith(FEED_AND_CUT)
 
+    def test_print_raw_job_with_image_bytes_unchanged(self, fake_backend):
+        # ESC/POS path with an image as the LAST item: add_image restores the
+        # text line height and alignment before add_feed_and_cut (TASK-012).
+        result = _raw_ticket([{"type": "text", "data": "x"},
+                              {"type": "image", "data": _png_b64(width=16), "width": 16}])
+        assert result["status"] == "success"
+        data = fake_backend.raw_jobs[0][1]
+        assert data.endswith(LINE_HEIGHT_TEXT + b"\x1b\x61\x00" + FEED_AND_CUT)
+
     @pytest.mark.parametrize("value", [0, -5, "x"])
     def test_print_raw_job_invalid_max_band_bytes_returns_error(self, fake_backend, value):
         result = _raw_ticket([{"type": "image", "data": _png_b64()}], {"max_band_bytes": value})
@@ -491,6 +500,13 @@ class TestPrintPdfJob:
         assert GS_V_0 in data
         assert data.endswith(FEED_AND_CUT)
 
+    def test_pdf_job_raw_feed_runs_at_text_line_height(self, fake_backend):
+        _pdf_job(_b64(_real_pdf_bytes()))
+        assert len(fake_backend.raw_jobs) == 1
+        data = fake_backend.raw_jobs[0][1]
+        assert data.endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
+        assert data.count(LINE_HEIGHT_TEXT) == 1
+
     def test_pdf_job_raw_label_uses_label_width_and_no_cut(self, fake_backend):
         settings = {"pdf_mode": "raster", "label_settings": {"width": 60, "height": 30}}
         result = _pdf_job(_b64(_real_pdf_bytes()), settings)
@@ -500,6 +516,7 @@ class TestPrintPdfJob:
         data = fake_backend.raw_jobs[0][1]
         assert not data.endswith(FULL_CUT)
         assert FEED_AND_CUT not in data
+        assert data.endswith(LINE_HEIGHT_TEXT)
 
 
 # ---------------------------------------------------------------------------
@@ -851,7 +868,7 @@ class TestRenderedPdfJob:
         assert printer == "TestPrinter"
         assert job.startswith(LINE_HEIGHT_IMAGE)       # raster from pdf_to_escpos
         assert GS_V_0 in job
-        assert job.endswith(FEED_AND_CUT)
+        assert job.endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
 
     def test_rendered_pdf_paper_size_58_uses_384_dots(self, fake_backend):
         data = _pdf_ticket(SIMPLE_TICKET, paper_size=58)["data"]

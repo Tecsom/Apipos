@@ -74,6 +74,41 @@ def test_feed_and_cut_returns_four_newlines_and_full_cut():
 
 
 # ---------------------------------------------------------------------------
+# pdf_to_escpos
+# ---------------------------------------------------------------------------
+
+def _blank_pdf_bytes(pages=1):
+    """A real blank PDF built in memory (blank pages rasterize to zero bytes)."""
+    fitz = pytest.importorskip("fitz", reason="PyMuPDF is required to build a real PDF")
+    doc = fitz.open()
+    for _ in range(pages):
+        doc.new_page(width=200, height=100)
+    try:
+        return doc.tobytes()
+    finally:
+        doc.close()
+
+
+def test_pdf_to_escpos_starts_tight_and_ends_with_text_line_height():
+    data = escpos.pdf_to_escpos(_blank_pdf_bytes())
+    assert data.startswith(b"\x1b\x33\x00")
+    assert data.endswith(b"\x1b\x33\x42")
+    assert GS_V_0 in data
+    assert data.count(b"\x1b\x33\x42") == 1
+
+
+def test_pdf_to_escpos_multipage_restores_line_height_once_at_end():
+    # Each page is emitted in several bands (MAX_BAND_BYTES), so two pages
+    # carry exactly twice the GS v 0 blocks of one page.
+    bands_per_page = escpos.pdf_to_escpos(_blank_pdf_bytes()).count(GS_V_0)
+    data = escpos.pdf_to_escpos(_blank_pdf_bytes(pages=2))
+    assert bands_per_page >= 1
+    assert data.count(GS_V_0) == 2 * bands_per_page
+    assert data.count(b"\x1b\x33\x42") == 1
+    assert data.endswith(b"\x1b\x33\x42")
+
+
+# ---------------------------------------------------------------------------
 # Image helpers
 # ---------------------------------------------------------------------------
 

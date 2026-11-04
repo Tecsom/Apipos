@@ -61,6 +61,11 @@ def send_image_to_printer(printer_name, image_data):
 # ESC/POS control commands
 # ---------------------------------------------------------------------------
 
+# Same bytes as print_job_builder.LINE_HEIGHT_*: the builder imports this module,
+# so the constants cannot live only there without an import cycle.
+LINE_HEIGHT_TEXT = b'\x1b\x33\x42'   # ESC 3 n -> line height for text
+LINE_HEIGHT_IMAGE = b'\x1b\x33\x00'  # ESC 3 0 -> tight line height for raster blocks
+
 CUT_FEED = b'\n\n\n\n'      # advance the paper so the content clears the cutter
 FULL_CUT = b'\x1d\x56\x00'  # GS V 0 -> full paper cut
 
@@ -105,6 +110,8 @@ def pdf_to_escpos(pdf_bytes, width_dots=576, threshold=200):
     Used on platforms without native PDF printing (Windows): each page is
     rendered to `width_dots` wide, converted to black & white and emitted as an
     ESC/POS raster image. Requires PyMuPDF (`pip install PyMuPDF`).
+    The stream starts with the tight (image) line height and ends with the text
+    line height restored.
     """
     try:
         import fitz  # PyMuPDF (optional dependency)
@@ -116,7 +123,7 @@ def pdf_to_escpos(pdf_bytes, width_dots=576, threshold=200):
     doc = fitz.open(stream=pdf_bytes, filetype='pdf')
     try:
         out = bytearray()
-        out += b'\x1b\x33\x00'  # tight line height
+        out += LINE_HEIGHT_IMAGE
         out += b'\x1b\x61\x01'  # center
         for page in doc:
             zoom = width_dots / page.rect.width if page.rect.width else 1
@@ -127,6 +134,10 @@ def pdf_to_escpos(pdf_bytes, width_dots=576, threshold=200):
                 image_bw = resize_image(image_bw, width_dots)
             out += convert_image_to_escpos_format(image_bw)
             out += b'\n'
+        # Leave the printer at the text line height: the raster block set it to 0 and
+        # the feed before the cut (`feed_and_cut`) advances nothing at that height, so
+        # the tail of the ticket stayed behind the cutter and came out with the next job.
+        out += LINE_HEIGHT_TEXT
         return bytes(out)
     finally:
         doc.close()
