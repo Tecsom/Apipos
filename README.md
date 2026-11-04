@@ -349,9 +349,15 @@ detallado está en su README.
 
 | Caso | Comando (en ranitas-pdv) |
 |---|---|
+| Release (recomendado) | `npm i -D @tecsom/apipos-js@X.Y.Z`  ·  `pnpm add -D @tecsom/apipos-js@X.Y.Z` |
 | Desarrollo local (repos hermanos) | `pnpm add -D "file:../apipos-js"` |
+| **Alternativas sin npm** | |
 | Release, desde git | `pnpm add -D "github:Tecsom/apipos-js#vX.Y.Z"` |
 | Release, tarball | `pnpm add -D "https://github.com/Tecsom/apipos-js/releases/download/vX.Y.Z/tecsom-apipos-js-X.Y.Z.tgz"` |
+
+ranitas-pdv usa pnpm, así que ahí va la forma `pnpm add -D`. La versión es
+siempre la exacta del Apipos instalado en las cajas (nunca `latest` ni `^`); el
+paquete está en [npmjs.com/package/@tecsom/apipos-js](https://www.npmjs.com/package/@tecsom/apipos-js).
 
 Después, `pnpm run sync:apipos-js`: ranitas-pdv sirve sus módulos estáticos
 desde `/public` sin empaquetador, así que copia el `dist/` compilado de la
@@ -435,8 +441,9 @@ Cuando algo falle, manda `apipos.log`, `apipos.log.1` (si existe) e `install.log
    instaladores al release `vX.Y.Z` (en borrador).
 2. En `apipos-js`: `npm run sync-version`, `npm test`, commit
    `chore: bump version X.Y.Z` y tag `vX.Y.Z`.
-3. `npm run pack` en apipos-js → `release/tecsom-apipos-js-X.Y.Z.tgz` y subirlo
-   a su release `vX.Y.Z`.
+3. El push del tag a apipos-js dispara `publish.yml`, que publica
+   `@tecsom/apipos-js@X.Y.Z` en npm; `release.sh` espera a que termine y, además,
+   sube el `.tgz` al release de GitHub como alternativa sin npm.
 4. Publicar el release de Apipos (el script lo ofrece al final). Solo entonces
    el auto-updater de las cajas lo ve.
 

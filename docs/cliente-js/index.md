@@ -25,15 +25,26 @@ El contrato HTTP que envuelve se documenta en la sección [API HTTP](../api/).
 
 | Caso | Comando |
 |---|---|
+| Release (recomendado) | `npm i -D @tecsom/apipos-js@X.Y.Z`  ·  `pnpm add -D @tecsom/apipos-js@X.Y.Z` |
 | Desarrollo local (repos hermanos en `REPOSITORIES/`) | `pnpm add -D "file:../apipos-js"` |
+| **Alternativas sin npm** | |
 | Release, desde git | `pnpm add -D "github:Tecsom/apipos-js#vX.Y.Z"` |
 | Release, tarball | `pnpm add -D "https://github.com/Tecsom/apipos-js/releases/download/vX.Y.Z/tecsom-apipos-js-X.Y.Z.tgz"` |
 
-Desde git, el gestor de paquetes instala las devDependencies y corre `prepare`
-(= `npm run build`), así que `dist/` se genera solo. El tarball ya trae `dist/`.
+El paquete de npm y el tarball ya traen `dist/`. Desde git, el gestor de
+paquetes instala las devDependencies y corre `prepare` (= `npm run build`), así
+que `dist/` se genera solo.
+
+::: tip
+El paquete está publicado en npm:
+[npmjs.com/package/@tecsom/apipos-js](https://www.npmjs.com/package/@tecsom/apipos-js).
+Cada versión se publica sola al sacar el release, con *provenance* (repo y
+commit verificables).
+:::
 
 ::: warning
-Usa siempre la versión **igual** a la del Apipos instalado en las cajas.
+Usa siempre la versión **exacta** del Apipos instalado en las cajas
+(`@X.Y.Z`; nunca `latest` ni `^`).
 :::
 
 ## Servir `dist/` sin empaquetador

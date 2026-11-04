@@ -109,8 +109,9 @@ dependencias, que envuelve los endpoints de esta guía (`checkHealth`,
 aquí. Vive en su propio repositorio, `Tecsom/apipos-js`, y su versión es
 **siempre** la de Apipos: la librería `X.Y.Z` está hecha para Apipos `X.Y.Z`.
 
-Se instala con la versión del Apipos que corre en las cajas:
-`pnpm add -D "github:Tecsom/apipos-js#vX.Y.Z"` o el tarball del release
+Se instala desde npm con la versión exacta del Apipos que corre en las cajas:
+`npm i -D @tecsom/apipos-js@X.Y.Z` (o `pnpm add -D @tecsom/apipos-js@X.Y.Z`);
+o, sin npm, `pnpm add -D "github:Tecsom/apipos-js#vX.Y.Z"` o el tarball del release
 (`https://github.com/Tecsom/apipos-js/releases/download/vX.Y.Z/tecsom-apipos-js-X.Y.Z.tgz`);
 en desarrollo local, `pnpm add -D "file:../apipos-js"`. Un front que sirve
 módulos estáticos sin empaquetador (como ranitas-pdv) copia el `dist/` del

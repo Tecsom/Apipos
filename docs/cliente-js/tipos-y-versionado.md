@@ -47,6 +47,9 @@ Por defecto leen `../Apipos/app-meta.env` (el checkout hermano); con otra ruta:
 
 Un release publica el mismo tag `vX.Y.Z` en ambos repos: Apipos con sus
 instaladores y apipos-js con `release/tecsom-apipos-js-X.Y.Z.tgz` (`npm run pack`).
+Además, el tag `vX.Y.Z` de apipos-js dispara `publish.yml` (GitHub Actions), que
+publica `@tecsom/apipos-js@X.Y.Z` en npm con *provenance*; el `.tgz` del release
+queda como alternativa sin npm.
 El checklist completo está en [Contribuir](../contribuir/#checklist-de-release-dos-repos).
 
 El lado HTTP del versionado (headers y `data.client` de `GET /health`) se
@@ -61,7 +64,7 @@ informativo: **nunca bloquea ni cancela la petición**, el ticket se imprime igu
 
 | Aviso en la consola | Qué pasa | Cómo se resuelve |
 |---|---|---|
-| `[apipos-js] Apipos X.Y.Z es más nuevo que la librería apipos-js A.B.C. Actualiza la librería en el front: ambas deben ir en la misma versión.` | El front trae una librería más vieja que el Apipos de la caja. | Actualiza la dependencia del front a `vX.Y.Z` (`pnpm add -D "github:Tecsom/apipos-js#vX.Y.Z"` o el tarball del release) y, si la sirves sin empaquetador, vuelve a copiar `dist/` a tu carpeta estática. |
+| `[apipos-js] Apipos X.Y.Z es más nuevo que la librería apipos-js A.B.C. Actualiza la librería en el front: ambas deben ir en la misma versión.` | El front trae una librería más vieja que el Apipos de la caja. | Actualiza la dependencia del front a `X.Y.Z` (`npm i -D @tecsom/apipos-js@X.Y.Z` o `pnpm add -D @tecsom/apipos-js@X.Y.Z`; sin npm, desde git o el tarball del release) y, si la sirves sin empaquetador, vuelve a copiar `dist/` a tu carpeta estática. |
 | `[apipos-js] La librería apipos-js A.B.C es más nueva que Apipos X.Y.Z instalado en esta máquina. Actualiza Apipos (menú de bandeja → Buscar actualizaciones): ambas deben ir en la misma versión.` | La caja tiene un Apipos más viejo que la librería del front. | Actualiza Apipos en esa máquina: menú de bandeja → "Buscar actualizaciones", o el instalador del release `vA.B.C`. |
 | `[apipos-js] Apipos no reporta su versión (falta el header X-Apipos-Version): es anterior a la librería apipos-js A.B.C. Actualiza Apipos en esta máquina.` | El Apipos de la caja es anterior a 1.0.6 (aún no tenía handshake). | Actualiza Apipos en esa máquina, igual que el caso anterior. |
 

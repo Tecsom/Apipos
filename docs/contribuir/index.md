@@ -90,10 +90,12 @@ los instaladores.
 
 ## Desarrollo de apipos-js
 
-Requiere Node ≥ 22.18 (corre las pruebas y los scripts `.ts` directamente, por
-type stripping).
+Requiere **Node ≥ 22.18** (corre las pruebas y los scripts `.ts` directamente, por
+type stripping: `scripts/sync-version.ts` es TypeScript sin compilar y con Node 20
+no arranca). El repo trae un `.nvmrc`, así que `nvm use` toma la versión correcta.
 
 ```bash
+nvm use              # toma el .nvmrc (Node 24)
 npm install          # instala TypeScript y @types/node (versiones exactas) y compila (prepare)
 npm run build        # tsc → dist/ (.js + .d.ts)
 npm test             # build + typecheck de pruebas + node --test (las pruebas importan dist/)
@@ -192,8 +194,9 @@ Apipos `X.Y.Z`, y un release publica el mismo tag `vX.Y.Z` en ambos repos.
    instaladores al release `vX.Y.Z` (en borrador).
 2. En `apipos-js`: `npm run sync-version`, `npm test`, commit
    `chore: bump version X.Y.Z` y tag `vX.Y.Z`.
-3. `npm run pack` en apipos-js → `release/tecsom-apipos-js-X.Y.Z.tgz` y subirlo
-   a su release `vX.Y.Z`.
+3. El push del tag a apipos-js dispara `publish.yml`, que publica
+   `@tecsom/apipos-js@X.Y.Z` en npm; `release.sh` espera a que termine y, además,
+   sube el `.tgz` al release de GitHub como alternativa sin npm.
 4. Publicar el release de Apipos (el script lo ofrece al final). Solo entonces
    el auto-updater de las cajas lo ve.
 
@@ -217,12 +220,21 @@ misma versión:
 4. Commit `chore: bump version X.Y.Z` + tag `vX.Y.Z` en cada repo, y push. El
    tag de Apipos dispara `.github/workflows/build-installers.yml`.
 5. apipos-js: `npm run pack` y su release `vX.Y.Z` en **borrador** con el `.tgz`.
+   El push del tag ya disparó `.github/workflows/publish.yml` de apipos-js.
+
+   **5b.** Espera la publicación en npm: sigue la ejecución de `publish.yml` y, si
+   pasa, comprueba con `npm view` que `@tecsom/apipos-js@X.Y.Z` ya está en el
+   registro (reintenta unos segundos mientras npm lo indexa). Si falla, muestra
+   el log y sale; la primera vez suele ser porque falta configurar *trusted
+   publishing* en npmjs.com (ver la cabecera de `publish.yml`).
 6. Espera los instaladores de Apipos (Windows, macOS, Linux), que quedan en el
    release `vX.Y.Z` de Apipos, también en **borrador**.
 
 ::: warning
-`release.sh` nunca publica: los dos releases se publican a mano en GitHub. Solo
-entonces el auto-updater de las cajas ve la versión nueva.
+`release.sh` nunca publica los releases de GitHub: los dos se publican a mano.
+Solo entonces el auto-updater de las cajas ve la versión nueva. npm, en cambio,
+sí queda publicado automáticamente (lo publica `publish.yml` al llegar el tag;
+npm no tiene borrador).
 :::
 
 Requiere git, node/npm y GitHub CLI (`gh`) con sesión (`gh auth login`). Si
