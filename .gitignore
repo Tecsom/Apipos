@@ -20,3 +20,8 @@ Thumbs.db
 build_macos_signed.sh
 cli/**
 agent-docs/**
+
+# Sitio de documentación (VitePress)
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

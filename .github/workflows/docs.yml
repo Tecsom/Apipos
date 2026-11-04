@@ -1,0 +1,65 @@
+# Construye el sitio de documentación (VitePress, carpeta docs/) y lo publica en
+# GitHub Pages: https://tecsom.github.io/Apipos/
+#   - push a main que toque docs/** o este workflow -> build + deploy
+#   - pull request que toque docs/** o este workflow  -> solo build (detecta
+#     enlaces internos rotos: VitePress falla el build con enlaces muertos)
+#   - a mano desde Actions -> "Documentación" -> Run workflow -> build + deploy
+#
+# Requisito: GitHub Pages debe estar en modo "GitHub Actions"
+# (Settings -> Pages -> Source: GitHub Actions, o
+#  gh api -X POST repos/Tecsom/Apipos/pages -f build_type=workflow).
+# Mientras Pages no esté habilitado, el job deploy falla.
+
+name: Documentación
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', '.github/workflows/docs.yml']
+  pull_request:
+    paths: ['docs/**', '.github/workflows/docs.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # En pull requests solo se construye: configure-pages falla si Pages no
+      # está habilitado y el artefacto no se despliega.
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

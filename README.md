@@ -1,5 +1,7 @@
 # Apipos (Api POS)
 
+> 📖 Documentación: https://tecsom.github.io/Apipos/
+
 API local de impresión para puntos de venta. Corre como una pequeña aplicación
 de bandeja (system tray / barra de menú) que expone una API HTTP en
 `http://localhost:50432` para imprimir tickets ESC/POS, abrir el cajón de dinero
