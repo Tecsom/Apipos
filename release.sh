@@ -17,10 +17,13 @@
 #   4. Commit "chore: bump version X.Y.Z" + tag vX.Y.Z en cada repo, y push.
 #      El tag de Apipos dispara .github/workflows/build-installers.yml.
 #   5. apipos-js: npm run pack y su release vX.Y.Z en BORRADOR con el .tgz.
+#      El push de su tag dispara .github/workflows/publish.yml (npm); el script
+#      espera ese publish y comprueba la versión en el registro.
 #   6. Espera los instaladores de Apipos (Windows, macOS, Linux), que quedan en
 #      el release vX.Y.Z de Apipos, también en BORRADOR.
-#   Nunca publica: los dos releases se publican a mano en GitHub. Solo entonces
-#   el auto-updater de las cajas ve la versión nueva.
+#   Nunca publica los releases de GitHub: los dos se publican a mano. Solo
+#   entonces el auto-updater de las cajas ve la versión nueva. npm sí queda
+#   publicado automáticamente porque no tiene borrador.
 #
 # apipos-js en otra ruta:  APIPOS_JS_DIR=/ruta/a/apipos-js ./release.sh
 # Recompilar un tag que ya existe:  ./build-installers.sh X.Y.Z --rebuild
@@ -32,6 +35,7 @@ set -Eeuo pipefail
 cd "$(dirname "$0")"
 APIPOS_DIR="$PWD"
 WORKFLOW="build-installers.yml"
+JS_WORKFLOW="publish.yml"
 
 die() { echo "❌ $*" >&2; exit 1; }
 confirm() {
@@ -87,6 +91,7 @@ on_exit() {
       echo "    apipos-js:     cd ${JS_DIR} && gh release view ${TAG}" >&2
       echo "                   si falta: npm run pack && gh release create ${TAG} \\" >&2
       echo "                     release/*-${NEW}.tgz --draft --verify-tag --title \"apipos-js ${NEW}\" --generate-notes" >&2
+      echo "    npm:  cd ${JS_DIR} && gh run list --workflow ${JS_WORKFLOW}" >&2
       ;;
   esac
 }
@@ -99,7 +104,7 @@ DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     -*) die "opción desconocida: $arg (usa --help)" ;;
     *) NEW="${arg#v}" ;;
   esac
@@ -188,18 +193,23 @@ JS_BRANCH="$(check_repo apipos-js "$JS_DIR")"
 JS_TGZ="$JS_DIR/release/$(printf '%s' "$JS_PKG_NAME" | sed -e 's/^@//' -e 's|/|-|')-${NEW}.tgz"
 
 echo ""
+JS_NPM_NOTE=""  # solo fuera del dry run: el dry run no sube tag ni publica
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "DRY RUN: solo cambia la versión en local, corre las pruebas y lo revierte."
 else
-  echo "Se va a subir ${TAG} y dejar los dos releases en BORRADOR:"
+  echo "Se va a subir ${TAG}, publicar ${JS_PKG_NAME}@${NEW} en npm y dejar los dos releases de GitHub en BORRADOR:"
+  JS_NPM_NOTE=", publish en npm (sin borrador)"
 fi
 echo "  ${APP_NAME} (${APIPOS_BRANCH}): ${CUR} -> ${NEW}, commit + tag ${TAG}, push (compila los instaladores)"
 echo "    commits que se suben:"
 outgoing "$APIPOS_DIR" "$APIPOS_BRANCH"
-echo "  apipos-js (${JS_BRANCH}): ${JS_CUR} -> ${NEW}, commit + tag ${TAG}, push, release con $(basename "$JS_TGZ")"
+echo "  apipos-js (${JS_BRANCH}): ${JS_CUR} -> ${NEW}, commit + tag ${TAG}, push, release con $(basename "$JS_TGZ")${JS_NPM_NOTE}"
 echo "    commits que se suben:"
 outgoing "$JS_DIR" "$JS_BRANCH"
 echo ""
+if [[ "$DRY_RUN" != 1 ]]; then
+  echo "  ⚠️  npm no tiene borrador: ${JS_PKG_NAME}@${NEW} queda público al subir el tag y esa versión no se puede volver a usar."
+fi
 confirm "¿Continuar?" || { echo "Cancelado; no se cambió nada."; exit 0; }
 
 # ---------------------------------------------------------------------------
@@ -274,6 +284,40 @@ echo "==> Empaquetando apipos-js"
 echo "    release ${TAG} de apipos-js creado en borrador"
 
 # ---------------------------------------------------------------------------
+# 5b. Esperar la publicación en npm (el tag de apipos-js dispara publish.yml)
+# ---------------------------------------------------------------------------
+echo "==> Buscando la ejecución del workflow de npm (apipos-js)"
+JS_RUN_ID=""
+for _ in $(seq 1 30); do
+  JS_RUN_ID="$(cd "$JS_DIR" && gh run list --workflow "$JS_WORKFLOW" --event push --limit 10 \
+    --json databaseId,createdAt \
+    -q "[.[] | select(.createdAt >= \"${START_TIME}\")] | .[0].databaseId // empty")"
+  [[ -n "$JS_RUN_ID" ]] && break
+  sleep 3
+done
+[[ -n "$JS_RUN_ID" ]] \
+  || die "No apareció la ejecución. Revísala con: cd ${JS_DIR} && gh run list --workflow ${JS_WORKFLOW}"
+
+echo "==> Publicando ${JS_PKG_NAME}@${NEW} en npm"
+if ! (cd "$JS_DIR" && gh run watch "$JS_RUN_ID" --exit-status); then
+  echo ""
+  (cd "$JS_DIR" && gh run view "$JS_RUN_ID" --log-failed) | tail -n 60 || true
+  die "Falló la publicación en npm. Si es la primera vez, configura trusted publishing (ver cabecera de .github/workflows/publish.yml en apipos-js)."
+fi
+
+# El registro tarda en indexar: reintenta. `|| true` evita que set -e corte el
+# bucle cuando npm view falla (404 mientras la versión aún no aparece).
+JS_PUBLISHED=""
+for _ in $(seq 1 10); do
+  JS_PUBLISHED="$(npm view "${JS_PKG_NAME}@${NEW}" version 2>/dev/null || true)"
+  [[ "$JS_PUBLISHED" == "$NEW" ]] && break
+  sleep 6
+done
+[[ "$JS_PUBLISHED" == "$NEW" ]] \
+  || die "El workflow terminó bien pero npm no muestra ${JS_PKG_NAME}@${NEW}. Revisa: npm view ${JS_PKG_NAME} versions"
+echo "    publicado: https://www.npmjs.com/package/${JS_PKG_NAME}/v/${NEW}"
+
+# ---------------------------------------------------------------------------
 # 6. Wait for the Apipos installers (the workflow creates its draft release)
 # ---------------------------------------------------------------------------
 echo "==> Buscando la ejecución del workflow de instaladores"
@@ -307,6 +351,9 @@ show_release() {  # $1 = label, $2 = repo dir
 STAGE="done"
 show_release "$APP_NAME" "$APIPOS_DIR"
 show_release "apipos-js" "$JS_DIR"
+echo ""
+echo "npm (ya publicado)"
+echo "  https://www.npmjs.com/package/${JS_PKG_NAME}/v/${NEW}"
 echo ""
 echo "✅ ${TAG} listo en BORRADOR en los dos repos. Publícalos desde GitHub"
 echo "   (Releases → Edit → Publish release). Solo entonces el auto-updater de las"
