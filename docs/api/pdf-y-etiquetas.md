@@ -37,7 +37,9 @@ curl -s -X POST http://localhost:50432/print \
     impresión del SO). **Es el modo correcto para impresoras de etiquetas con
     driver instalado (ej. AiYin)** — su firmware ignora los trabajos raw genéricos.
   - `"raw"`: rasteriza el PDF a imagen ESC/POS y lo manda crudo. Para
-    tiqueteras térmicas de recibos o impresoras sin driver.
+    tiqueteras térmicas de recibos o impresoras sin driver. Al final avanza el
+    papel igual que un ticket ESC/POS (cuatro renglones) y corta, para que el
+    final del ticket salga de la cuchilla.
 - `settings.label_settings` (para etiquetas): `{ "width", "height", "unit" }`.
   `unit` es `"mm"` (default) o `"inch"`. En modo driver define el tamaño del
   media (ej. `media=Custom.60x30mm`); en modo raw define el ancho de

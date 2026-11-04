@@ -99,7 +99,9 @@ Cómo llega el PDF a la impresora:
 - **`raw`**: se rasteriza al ancho de la página × 8 dots (ej. 72 mm → 576);
   `settings.width_dots` lo sobrescribe y, con `label_settings`, manda el ancho de
   la etiqueta × 8. El corte sigue la regla de los PDF: `cut` explícito; si se
-  omite, corta en recibos y no en etiquetas.
+  omite, corta en recibos y no en etiquetas. Antes de cortar avanza el papel
+  igual que un ticket ESC/POS (cuatro renglones), para que el final del ticket
+  salga de la cuchilla y no aparezca al inicio del siguiente.
 - **`driver`**: el media es el tamaño exacto de la página renderizada
   (ej. `Custom.72x123.4mm`); el corte lo decide el driver.
 
