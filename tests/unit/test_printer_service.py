@@ -971,6 +971,60 @@ class TestRenderedPdfJob:
         assert too_tall["message"] == "Rendered ticket is too tall (34.0 mm > 20 mm)."
         assert fake_backend.raw_jobs == [] and fake_backend.pdf_jobs == []
 
+    # TASK-013: tickets taller than max_height_mm are paginated, never refused in raw mode.
+    # Blank content (spacers) keeps byte counts deterministic: a raster of text may
+    # contain any sequence, so tickets with text only use startswith/endswith.
+    BLANK_TALL = [{"type": "spacer", "height_mm": 5}] * 10      # 3 pages at 20 mm, 54 mm total
+    SIXTY_LINES = [{"type": "text", "data": f"Linea {i}"} for i in range(60)]
+
+    def test_rendered_pdf_tall_ticket_is_one_raw_job_with_a_single_cut(self, fake_backend):
+        result = _pdf_ticket(self.BLANK_TALL, max_height_mm=20)
+        assert result["status"] == "success"
+        assert len(fake_backend.raw_jobs) == 1 and fake_backend.pdf_jobs == []
+        job = fake_backend.raw_jobs[0][1]
+        assert job.startswith(LINE_HEIGHT_IMAGE)
+        assert job.endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
+        assert job.count(FULL_CUT) == 1
+        assert job.count(LINE_HEIGHT_TEXT) == 1
+        assert job.count(b"\x1d\x76\x30\x00") >= 3          # every page rasterized
+        assert result["data"]["cut"] is True
+        assert result["data"]["page_mm"]["height"] == 54.0
+        assert "pages" not in result["data"]
+
+    def test_rendered_pdf_tall_ticket_with_text_prints_instead_of_failing(self, fake_backend):
+        result = _pdf_ticket(self.SIXTY_LINES, max_height_mm=20)
+        assert result["status"] == "success"
+        assert len(fake_backend.raw_jobs) == 1
+        job = fake_backend.raw_jobs[0][1]
+        assert job.startswith(LINE_HEIGHT_IMAGE)
+        assert job.endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
+
+    def test_rendered_pdf_tall_ticket_without_cut(self, fake_backend):
+        result = _pdf_ticket(self.BLANK_TALL, max_height_mm=20, cut=False)
+        assert result["status"] == "success"
+        job = fake_backend.raw_jobs[0][1]
+        assert job.endswith(LINE_HEIGHT_TEXT)
+        assert FULL_CUT not in job
+        assert result["data"]["cut"] is False
+
+    def test_rendered_pdf_tall_ticket_opens_drawer_once_after_the_ticket(self, fake_backend):
+        result = _pdf_ticket(self.BLANK_TALL + [{"type": "open_withdrawer"}], max_height_mm=20)
+        assert result["status"] == "success"
+        assert len(fake_backend.raw_jobs) == 2
+        assert fake_backend.raw_jobs[0][1].endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
+        assert fake_backend.raw_jobs[1][1] == OPEN_DRAWER
+        assert result["data"]["drawer_opened"] is True
+
+    @pytest.mark.parametrize("settings", [
+        {"pdf_mode": "driver"},
+        {"label_settings": {"width": 72, "height": 50, "unit": "mm"}},
+    ])
+    def test_rendered_pdf_tall_ticket_in_driver_mode_keeps_the_too_tall_error(self, fake_backend, settings):
+        result = _pdf_ticket(self.SIXTY_LINES, max_height_mm=20, **settings)
+        assert result == {"status": "error", "data": None,
+                          "message": "Rendered ticket is too tall (242.1 mm > 20 mm)."}
+        assert fake_backend.raw_jobs == [] and fake_backend.pdf_jobs == []
+
     def test_rendered_pdf_invalid_max_image_height_returns_existing_error(self, fake_backend):
         result = _pdf_ticket(SIMPLE_TICKET, max_image_height_dots=0)
         assert result["message"] == "'max_image_height_dots' must be a positive integer."
@@ -1077,3 +1131,24 @@ class TestRenderJob:
         # same contract as print_job: the controller maps it to a 500.
         with pytest.raises(ValueError):
             svc.render_job(None)
+
+    def test_render_job_tall_ticket_reports_real_pages(self, no_backend):
+        content = [{"type": "text", "data": f"Linea {i}"} for i in range(60)]
+        result = svc.render_job({"content": content, "settings": {"max_height_mm": 20}})
+        assert result["status"] == "success"
+        data = result["data"]
+        assert data["pages"] == 13
+        import fitz
+        doc = fitz.open("pdf", base64.b64decode(data["base64"]))
+        assert len(doc) == 13
+        assert data["page_mm"]["height"] == 242.1
+
+    def test_render_job_png_of_tall_ticket_is_one_stacked_image(self, no_backend):
+        content = [{"type": "text", "data": f"Linea {i}"} for i in range(60)]
+        result = svc.render_job({"content": content, "format": "png",
+                                 "settings": {"max_height_mm": 20}})
+        data = result["data"]
+        assert data["pages"] == 13
+        width, height = _png_size(base64.b64decode(data["base64"]))
+        assert width == pytest.approx(576, abs=2)
+        assert height == pytest.approx(242.1 * 203 / 25.4, abs=13)

@@ -656,15 +656,20 @@ def _print_rendered_pdf_job(printer_name, settings, content):
     `pdf_mode` follows the PDF jobs rule (driver when label_settings is given,
     raw otherwise). Driver: the custom media is the exact rendered page size.
     Raw: rasterized at the page width (width_mm x 8 dots) unless width_dots is
-    given. `open_withdrawer` sends the drawer pulse as a SECOND raw job after
-    the ticket (the PDF itself cannot carry ESC/POS commands).
+    given; a ticket the renderer split into several pages still goes out as ONE
+    raw job (pages back to back, a single cut at the end). Driver: a ticket of
+    more than one page is refused with the "too tall" error (the driver decides
+    the media and the cut, so the pages could not be kept continuous).
+    `open_withdrawer` sends the drawer pulse as a SECOND raw job after the
+    ticket (the PDF itself cannot carry ESC/POS commands).
     """
     if not content:
         return error_response("No content to print.")
     settings = settings or {}
 
     try:
-        rendered = pdf_renderer.render_ticket_pdf(content, _render_options(settings))
+        options = _render_options(settings)
+        rendered = pdf_renderer.render_ticket_pdf(content, options)
     except ValueError as e:
         return error_response(str(e))
     page_mm = rendered['page_mm']
@@ -677,6 +682,9 @@ def _print_rendered_pdf_job(printer_name, settings, content):
     mode = str(settings.get('pdf_mode') or ('driver' if label else 'raw')).lower()
 
     if mode in ('driver', 'document'):
+        if rendered['pages'] > 1:
+            return error_response(
+                pdf_renderer.too_tall_message(page_mm['height'], options['max_height_mm']))
         pdf_settings['pdf_mode'] = 'driver'
         pdf_settings['label_settings'] = {
             'width': page_mm['width'], 'height': page_mm['height'], 'unit': 'mm',
@@ -736,7 +744,9 @@ def render_job(payload):
     Same body as POST /print (`printer` and `type` are ignored: no printer is
     validated and no backend is touched) plus `format` ("pdf" | "png", default
     "pdf") and `dpi` (PNG only, 72-600, default 203). A legacy bare list of
-    items renders with default settings.
+    items renders with default settings. A ticket split into several pages
+    reports its real `pages`; the PDF carries them all and the PNG stacks them
+    top to bottom.
     """
     _printer_name, _job_type, settings, content, _pdf_data = _parse_print_payload(payload)
     options = payload if isinstance(payload, dict) else {}
@@ -766,7 +776,7 @@ def render_job(payload):
             'dpi': dpi,
             'base64': base64.b64encode(output).decode('ascii'),
             'page_mm': rendered['page_mm'],
-            'pages': 1,
+            'pages': rendered['pages'],
             'fonts': rendered['fonts'],
             'warnings': rendered['warnings'],
         },

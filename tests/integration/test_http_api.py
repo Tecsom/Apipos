@@ -379,6 +379,26 @@ def test_render_png_returns_200_with_png_base64(client, fake_backend):
     assert base64.b64decode(data["base64"]).startswith(b"\x89PNG")
 
 
+def test_print_tall_pdf_ticket_returns_200_and_one_raster_job(client, fake_backend):
+    response = client.post("/print", json={
+        "printer": "TestPrinter", "type": "RAW",
+        "settings": {"paper_size": 80, "renderer": "pdf", "max_height_mm": 20},
+        "content": [{"type": "spacer", "height_mm": 5}] * 10,
+    })
+    assert response.status_code == 200
+    assert _json(response)["status"] == "success"
+    assert len(fake_backend.raw_jobs) == 1
+    assert fake_backend.raw_jobs[0][1].endswith(LINE_HEIGHT_TEXT + FEED_AND_CUT)
+
+
+def test_render_tall_ticket_returns_real_page_count(client, fake_backend):
+    response = client.post("/render", json={"settings": {"max_height_mm": 20},
+                                            "content": [{"type": "spacer", "height_mm": 5}] * 10})
+    assert response.status_code == 200
+    assert _json(response)["data"]["pages"] == 3
+    assert fake_backend.raw_jobs == [] and fake_backend.pdf_jobs == []
+
+
 def test_render_unsupported_format_returns_400(client, fake_backend):
     response = client.post("/render", json={"format": "gif", "content": RENDER_CONTENT})
     assert response.status_code == 400
