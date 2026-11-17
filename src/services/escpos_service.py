@@ -111,7 +111,9 @@ def pdf_to_escpos(pdf_bytes, width_dots=576, threshold=200):
     rendered to `width_dots` wide, converted to black & white and emitted as an
     ESC/POS raster image. Requires PyMuPDF (`pip install PyMuPDF`).
     The stream starts with the tight (image) line height and ends with the text
-    line height restored.
+    line height restored. The pages follow each other with no command in
+    between (a single line feed closes the last one), so a multi-page PDF prints
+    as one continuous strip.
     """
     try:
         import fitz  # PyMuPDF (optional dependency)
@@ -133,7 +135,10 @@ def pdf_to_escpos(pdf_bytes, width_dots=576, threshold=200):
             if image_bw.width != width_dots:
                 image_bw = resize_image(image_bw, width_dots)
             out += convert_image_to_escpos_format(image_bw)
-            out += b'\n'
+        # One line feed after the LAST page only. Nothing goes between pages: a
+        # feed right after a long raster made a POS80 drop the header of the next
+        # band and print the first rows of the following page as text.
+        out += b'\n'
         # Leave the printer at the text line height: the raster block set it to 0 and
         # the feed before the cut (`feed_and_cut`) advances nothing at that height, so
         # the tail of the ticket stayed behind the cutter and came out with the next job.

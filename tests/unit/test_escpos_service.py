@@ -108,6 +108,19 @@ def test_pdf_to_escpos_multipage_restores_line_height_once_at_end():
     assert data.endswith(b"\x1b\x33\x42")
 
 
+def test_pdf_to_escpos_puts_nothing_between_pages():
+    # Blank pages: the raster is all zeros, so every 0x0a in the stream is a real
+    # line feed. Exactly one, after the last page; the pages are back to back.
+    one = escpos.pdf_to_escpos(_blank_pdf_bytes())
+    two = escpos.pdf_to_escpos(_blank_pdf_bytes(pages=2))
+    assert one.count(b"\n") == 1 and two.count(b"\n") == 1
+    assert two.endswith(b"\n\x1b\x33\x42")
+    head = b"\x1b\x33\x00\x1b\x61\x01"
+    tail = b"\n\x1b\x33\x42"
+    raster = one[len(head):-len(tail)]
+    assert two == head + raster + raster + tail
+
+
 # ---------------------------------------------------------------------------
 # Image helpers
 # ---------------------------------------------------------------------------
