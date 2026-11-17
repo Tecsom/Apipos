@@ -142,7 +142,7 @@ en paralelo:
 | Runner          | Script               | Archivo en el release                 |
 |-----------------|----------------------|---------------------------------------|
 | `windows-2022`  | `build-windows.bat`  | `Apipos-Setup.exe`                    |
-| `macos-14` (arm64) | `build-macos.sh` / `build_macos_signed.template.sh` | `Apipos-X.Y.Z-arm64.dmg` |
+| `macos-15` (arm64) | `build-macos.sh` / `build_macos_signed.template.sh` | `Apipos-X.Y.Z-arm64.dmg` |
 | `ubuntu-22.04`  | `build-linux.sh`     | `Apipos-X.Y.Z-linux-x86_64.tar.gz`    |
 
 Además corre los tests. Si todo pasa, sube los tres archivos al release

@@ -117,7 +117,7 @@ jobs:
   macos:
     name: macOS arm64
     needs: meta
-    runs-on: macos-14  # Apple Silicon
+    runs-on: macos-15  # Apple Silicon (macos-14 was retired)
     env:
       MACOS_CERT_P12: ${{ vars.MACOS_UNSIGNED != 'true' && secrets.MACOS_CERT_P12 || '' }}
     steps:
