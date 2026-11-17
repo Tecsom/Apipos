@@ -7,7 +7,10 @@ Two phases:
      drawing operations;
   2. paint: create ONE page whose height is exactly the content height and
      replay the operations (shapes/images/embedded PDFs in order, then the text
-     grouped by color, one TextWriter per color).
+     grouped by color, one TextWriter per color). A ticket taller than
+     `max_height_mm` is split into consecutive pages (each no taller than that),
+     breaking only between finished blocks (items and table body rows); the
+     raw print path rasterizes them back to back into one continuous ticket.
 
 Drawing operations collected by the measuring phase:
 
@@ -128,6 +131,11 @@ def _align(value, default='left'):
 def _add_warning(warnings, message):
     if message not in warnings:
         warnings.append(message)
+
+
+def too_tall_message(height_mm, max_height_mm):
+    """User-facing error for a ticket (or a single block) that cannot fit `max_height_mm`."""
+    return f"Rendered ticket is too tall ({height_mm:.1f} mm > {max_height_mm:g} mm)."
 
 
 def _normalize_options(options):
@@ -362,7 +370,13 @@ class _Layout:
         self.fonts = fonts
         self.warnings = fonts.warnings
         self.ops = []
+        self.breaks = []   # (y, op_count) after each finished block: safe page breaks
         self.open_drawer = False
+
+
+def _mark_break(layout):
+    """Record a safe page-break candidate: the cursor after a finished block."""
+    layout.breaks.append((layout.y, len(layout.ops)))
 
 
 def _item_font_size(value, base):
@@ -520,6 +534,7 @@ def _layout_table(layout, item, n):
         if isinstance(row, (list, tuple)):
             texts = [_cell_text(row, i) for i in range(len(columns))]
             _layout_table_row(layout, texts, columns, body_face, size, lh)
+            _mark_break(layout)
 
 
 def _layout_separator(layout, item, n):
@@ -742,37 +757,96 @@ def _fix_to_unicode(doc, page, ops):
             doc.update_stream(int(value.split()[0]), _to_unicode_cmap(glyphs[basefont]))
 
 
-def _paint(ops, width, height, warnings):
-    """Create the single page, replay the ops and return the subset, compressed PDF bytes."""
+# Tolerance (pt) for every float comparison of the page split.
+PAGE_EPS = 1e-6
+
+
+def _page_slices(breaks, total, op_count, max_height_mm):
+    """Split a laid-out ticket of height `total` (pt) into pages no taller than
+    `max_height_mm`, breaking only at `breaks`.
+
+    Returns [(y_start, y_end, op_start, op_end), ...] in order; the slices are
+    contiguous and cover [0, total] and ops[0:op_count]. A ticket that fits
+    returns the single slice (0.0, total, 0, op_count). Raises ValueError
+    (too_tall_message, with the TOTAL height) when a block between two
+    consecutive breaks is taller than a page.
+    """
+    limit = max_height_mm * MM_PT
+    slices = []
+    start_y, start_op = 0.0, 0
+    while total - start_y > limit + PAGE_EPS:
+        best = None
+        for y, op_index in breaks:
+            if y <= start_y + PAGE_EPS:
+                continue
+            if y - start_y > limit + PAGE_EPS:
+                break
+            best = (y, op_index)
+        if best is None:
+            raise ValueError(too_tall_message(total / MM_PT, max_height_mm))
+        slices.append((start_y, best[0], start_op, best[1]))
+        start_y, start_op = best
+    slices.append((start_y, total, start_op, op_count))
+    return slices
+
+
+def _shift_op(op, dy):
+    """Copy of `op` moved `dy` pt up (page-local coordinates); `op` itself when dy == 0."""
+    if not dy:
+        return op
+    kind = op[0]
+    if kind in ('rect', 'image', 'pdf'):
+        rect = op[1]
+        return (kind, fitz.Rect(rect.x0, rect.y0 - dy, rect.x1, rect.y1 - dy)) + tuple(op[2:])
+    if kind == 'line':
+        (x1, y1), (x2, y2) = op[1], op[2]
+        return (kind, (x1, y1 - dy), (x2, y2 - dy)) + tuple(op[3:])
+    if kind == 'text':
+        return op[:2] + (op[2] - dy,) + tuple(op[3:])
+    return op
+
+
+def _paint(pages, width, warnings):
+    """Create one page per (ops, height) in `pages`, replay each page's ops and
+    return the subset, compressed PDF bytes."""
     doc = fitz.open()
     sources = []
     try:
-        page = doc.new_page(width=width, height=height)
-        for op in ops:
-            kind = op[0]
-            if kind == 'rect':
-                page.draw_rect(op[1], color=None, fill=op[2], width=0)
-            elif kind == 'line':
-                page.draw_line(op[1], op[2], color=op[5], width=op[3], dashes=op[4])
-            elif kind == 'image':
-                page.insert_image(op[1], stream=op[2])
-            elif kind == 'pdf':
-                source = fitz.open('pdf', op[2])
-                sources.append(source)
-                page.show_pdf_page(op[1], source, 0)
+        painted = []
+        for ops, height in pages:
+            page = doc.new_page(width=width, height=height)
+            for op in ops:
+                kind = op[0]
+                if kind == 'rect':
+                    page.draw_rect(op[1], color=None, fill=op[2], width=0)
+                elif kind == 'line':
+                    page.draw_line(op[1], op[2], color=op[5], width=op[3], dashes=op[4])
+                elif kind == 'image':
+                    page.insert_image(op[1], stream=op[2])
+                elif kind == 'pdf':
+                    source = fitz.open('pdf', op[2])
+                    sources.append(source)
+                    page.show_pdf_page(op[1], source, 0)
 
-        writers = {}
-        for op in ops:
-            if op[0] == 'text':
-                _, x, baseline, text, face, size, rgb = op
-                writer = writers.setdefault(rgb, fitz.TextWriter(page.rect))
-                writer.append((x, baseline), text, font=face.font, fontsize=size)
-        for rgb, writer in writers.items():
-            writer.write_text(page, color=rgb)
-        try:
-            _fix_to_unicode(doc, page, ops)
-        except Exception:
-            pass   # text extraction only: never block a ticket over it
+            writers = {}
+            for op in ops:
+                if op[0] == 'text':
+                    _, x, baseline, text, face, size, rgb = op
+                    writer = writers.setdefault(rgb, fitz.TextWriter(page.rect))
+                    writer.append((x, baseline), text, font=face.font, fontsize=size)
+            for rgb, writer in writers.items():
+                writer.write_text(page, color=rgb)
+            painted.append(page)
+
+        # Pages share their fonts, so each page gets the glyphs of the WHOLE
+        # ticket: fed only its own ops, the last page would overwrite the
+        # ToUnicode the earlier pages need.
+        all_ops = [op for ops, _height in pages for op in ops]
+        for page in painted:
+            try:
+                _fix_to_unicode(doc, page, all_ops)
+            except Exception:
+                pass   # text extraction only: never block a ticket over it
 
         try:
             doc.subset_fonts()
@@ -786,13 +860,19 @@ def _paint(ops, width, height, warnings):
 
 
 def render_ticket_pdf(content, options):
-    """Lay out RAW ticket items on a single PDF page sized to the content.
+    """Lay out RAW ticket items on a PDF sized to the content.
+
+    One page when the ticket fits `max_height_mm`; otherwise consecutive pages
+    no taller than that, broken only at safe points (after each item and after
+    each table body row), with the top margin on the first page and the bottom
+    margin on the last, so the pages printed back to back read as one ticket.
 
     `options` is the normalized dict of section 6.4.1 (missing keys take the
-    defaults). Returns {'pdf_bytes', 'page_mm': {'width', 'height'}, 'fonts',
-    'warnings', 'open_drawer'}. Raises ValueError with a user-facing message
-    for an invalid `font.size`, an unreadable image or a ticket taller than
-    `max_height_mm`. Items that are not dicts or have an unknown type are ignored.
+    defaults). Returns {'pdf_bytes', 'page_mm': {'width', 'height'}, 'pages',
+    'fonts', 'warnings', 'open_drawer'}; `page_mm.height` is the TOTAL height.
+    Raises ValueError with a user-facing message for an invalid `font.size`,
+    an unreadable image or a single block taller than `max_height_mm`. Items
+    that are not dicts or have an unknown type are ignored.
     """
     opts = _normalize_options(options)
     fonts = FontSet(opts['font']['family'])
@@ -805,16 +885,17 @@ def render_ticket_pdf(content, options):
         handler = _ITEM_LAYOUTS.get(item_type) if isinstance(item_type, str) else None
         if handler:
             handler(layout, item, n)
+            _mark_break(layout)
 
-    height = layout.y + layout.bottom
-    height_mm = height / MM_PT
-    if height_mm > opts['max_height_mm']:
-        raise ValueError(f"Rendered ticket is too tall ({height_mm:.1f} mm > {opts['max_height_mm']:g} mm).")
-
-    pdf_bytes = _paint(layout.ops, layout.width, height, layout.warnings)
+    total = layout.y + layout.bottom
+    slices = _page_slices(layout.breaks, total, len(layout.ops), opts['max_height_mm'])
+    pages = [([_shift_op(op, y0) for op in layout.ops[i0:i1]], y1 - y0)
+             for y0, y1, i0, i1 in slices]
+    pdf_bytes = _paint(pages, layout.width, layout.warnings)
     return {
         'pdf_bytes': pdf_bytes,
-        'page_mm': {'width': round(layout.width / MM_PT, 2), 'height': round(height_mm, 1)},
+        'page_mm': {'width': round(layout.width / MM_PT, 2), 'height': round(total / MM_PT, 1)},
+        'pages': len(slices),
         'fonts': fonts.used,
         'warnings': layout.warnings,
         'open_drawer': layout.open_drawer,
@@ -822,11 +903,25 @@ def render_ticket_pdf(content, options):
 
 
 def render_png(pdf_bytes, dpi):
-    """PNG bytes of the first page of `pdf_bytes` rendered at `dpi` (no alpha)."""
+    """PNG bytes of the whole ticket at `dpi` (no alpha): a single page as is,
+    several pages stacked top to bottom."""
     doc = fitz.open('pdf', pdf_bytes)
     try:
-        zoom = float(dpi) / 72.0
-        pix = doc[0].get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        return pix.tobytes('png')
+        matrix = fitz.Matrix(float(dpi) / 72.0, float(dpi) / 72.0)
+        if len(doc) == 1:
+            return doc[0].get_pixmap(matrix=matrix, alpha=False).tobytes('png')
+        images = []
+        for page in doc:
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            images.append(Image.frombytes('RGB', (pix.width, pix.height), pix.samples))
+        sheet = Image.new('RGB', (images[0].width, sum(image.height for image in images)),
+                          (255, 255, 255))
+        y = 0
+        for image in images:
+            sheet.paste(image, (0, y))
+            y += image.height
+        buf = io.BytesIO()
+        sheet.save(buf, 'PNG')
+        return buf.getvalue()
     finally:
         doc.close()

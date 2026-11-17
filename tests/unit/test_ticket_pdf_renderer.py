@@ -180,6 +180,7 @@ def test_page_height_is_margins_plus_content():
     assert doc[0].rect.height == pytest.approx(4 * MM + BASE_LH, abs=0.1)
     assert result["page_mm"]["height"] == round((4 * MM + BASE_LH) / MM, 1)
     assert len(doc) == 1
+    assert result["pages"] == 1
 
 
 def test_missing_options_use_defaults():
@@ -665,12 +666,128 @@ def test_empty_html_block_is_ignored():
 # Limits, drawer, ignored items, PNG, size
 # ---------------------------------------------------------------------------
 
-def test_ticket_taller_than_max_height_raises_exact_message():
-    content = [text_item(f"Linea {i}") for i in range(60)]
-    height_mm = (4 * MM + 60 * BASE_LH) / MM
+def page_lines(page):
+    return page.get_text().splitlines()
+
+
+SIXTY_LINES = [text_item(f"Linea {i}") for i in range(60)]
+
+
+def test_ticket_taller_than_max_height_is_paginated_between_items():
+    result, doc = render(SIXTY_LINES, max_height_mm=20)
+    total = 4 * MM + 60 * BASE_LH
+    assert result["pages"] == len(doc) == 13
+    assert all(page.rect.height <= 20 * MM + 0.01 for page in doc)
+    assert sum(page.rect.height for page in doc) == pytest.approx(total, abs=0.1)
+    assert result["page_mm"]["height"] == round(total / MM, 1)
+    assert "".join(page.get_text() for page in doc) == "".join(f"Linea {i}\n" for i in range(60))
+    assert [len(page_lines(page)) for page in doc] == [4] + [5] * 11 + [1]
+
+
+def test_single_block_taller_than_a_page_still_raises_exact_message():
+    with pytest.raises(ValueError) as exc:
+        r.render_ticket_pdf([{"type": "spacer", "height_mm": 30}], make_options(max_height_mm=20))
+    assert str(exc.value) == "Rendered ticket is too tall (34.0 mm > 20 mm)."
+
+    content = [text_item("antes"), {"type": "spacer", "height_mm": 30}, text_item("despues")]
+    total_mm = (4 * MM + 30 * MM + 2 * BASE_LH) / MM
     with pytest.raises(ValueError) as exc:
         r.render_ticket_pdf(content, make_options(max_height_mm=20))
-    assert str(exc.value) == f"Rendered ticket is too tall ({height_mm:.1f} mm > 20 mm)."
+    assert str(exc.value) == f"Rendered ticket is too tall ({total_mm:.1f} mm > 20 mm)."
+
+
+def test_page_slices_ticket_that_fits_is_one_slice():
+    assert r._page_slices([(10.0, 1), (20.0, 2)], 25.0, 2, 1000) == [(0.0, 25.0, 0, 2)]
+
+
+def test_page_slices_breaks_at_the_last_point_that_fits():
+    limit = 10 * MM
+    breaks = [(3 * MM, 1), (6 * MM, 2), (9 * MM, 3), (12 * MM, 4), (15 * MM, 5)]
+    assert r._page_slices(breaks, 17 * MM, 5, 10) == [(0.0, 9 * MM, 0, 3), (9 * MM, 17 * MM, 3, 5)]
+    # A break exactly at the limit fits.
+    exact = [(5 * MM, 1), (limit, 2), (15 * MM, 3)]
+    assert r._page_slices(exact, 18 * MM, 3, 10)[0] == (0.0, limit, 0, 2)
+
+
+def test_page_slices_repeated_breaks_never_create_empty_pages():
+    breaks = [(5 * MM, 1), (5 * MM, 1), (8 * MM, 2), (8 * MM, 2), (8 * MM, 3), (14 * MM, 4)]
+    slices = r._page_slices(breaks, 16 * MM, 4, 10)
+    assert slices == [(0.0, 8 * MM, 0, 3), (8 * MM, 16 * MM, 3, 4)]
+    assert all(y1 > y0 for y0, y1, _, _ in slices)
+
+
+def test_page_slices_are_contiguous():
+    breaks = [(k * 2 * MM, k) for k in range(1, 50)]
+    slices = r._page_slices(breaks, 101 * MM, 50, 7)
+    assert slices[0][0] == 0.0 and slices[0][2] == 0
+    assert slices[-1][1] == 101 * MM and slices[-1][3] == 50
+    for current, following in zip(slices, slices[1:]):
+        assert current[1] == following[0] and current[3] == following[2]
+    assert all(y1 - y0 <= 7 * MM + 1e-6 for y0, y1, _, _ in slices)
+
+
+def test_page_slices_without_a_reachable_break_raises_exact_message():
+    with pytest.raises(ValueError) as exc:
+        r._page_slices([(25 * MM, 1)], 28 * MM, 1, 20)
+    assert str(exc.value) == "Rendered ticket is too tall (28.0 mm > 20 mm)."
+
+
+def test_continuation_pages_have_no_top_margin_and_last_keeps_bottom_margin():
+    _, doc = render(SIXTY_LINES, max_height_mm=20)
+    assert span(doc[1], "Linea 4")["bbox"][1] < BASE_LH
+    assert span(doc[0], "Linea 0")["bbox"][1] >= 1 * MM - 0.5
+    assert doc[-1].rect.height == pytest.approx(BASE_LH + 3 * MM, abs=0.1)
+
+
+def test_long_table_is_paginated_between_rows_and_header_stays_with_first_row():
+    rows = [[1, f"Prod{i}", "$1", "$1"] for i in range(30)]
+    content = [text_item("A"), text_item("B"), text_item("C"), {"type": "table", "data": {"rows": rows}}]
+    _, doc = render(content, max_height_mm=20)
+    assert len(doc) > 2
+    # The header fits after the three lines but the first row does not: both move together.
+    assert words(doc[0], "Producto") == [] and len(words(doc[1], "Producto")) == 1
+    assert len(words(doc[1], "Prod0")) == 1
+    seen = [w[4] for page in doc for w in page.get_text("words") if w[4].startswith("Prod") and w[4] != "Producto"]
+    assert seen == [f"Prod{i}" for i in range(30)]
+
+
+def test_multi_line_high_contrast_block_is_never_split():
+    block = text_item("UNO\nDOS\nTRES\nCUATRO", high_contrast=True)
+    _, doc = render([text_item("A"), text_item("B"), block], max_height_mm=20)
+    assert len(doc) == 2
+    black = lambda page: [d for d in page.get_drawings() if d.get("fill") == (0.0, 0.0, 0.0)]
+    assert black(doc[0]) == [] and len(black(doc[1])) == 1
+    assert page_lines(doc[1]) == ["UNO", "DOS", "TRES", "CUATRO"]
+
+
+def test_zero_height_items_do_not_add_pages():
+    noisy = []
+    for i, item in enumerate(SIXTY_LINES):
+        noisy.append(item)
+        if i % 7 == 0:
+            noisy += [{"type": "open_withdrawer"}, {"type": "bogus", "data": "x"}, None]
+    plain, plain_doc = render(SIXTY_LINES, max_height_mm=20)
+    result, doc = render(noisy, max_height_mm=20)
+    assert result["pages"] == plain["pages"] == 13
+    assert [page.get_text() for page in doc] == [page.get_text() for page in plain_doc]
+    assert result["open_drawer"] is True
+
+
+def test_extracted_text_is_fixed_on_every_page(nbsp_font):
+    # Different glyphs per page: each page's ToUnicode must cover the whole ticket.
+    texts = ["AB CD"] * 4 + ["EF GH"] * 5 + ["IJ KL"] * 4
+    _, doc = render([text_item(text, font_family="Test Sans") for text in texts], max_height_mm=20)
+    assert len(doc) == 3
+    assert [page_lines(page) for page in doc] == [texts[0:4], texts[4:9], texts[9:13]]
+
+
+def test_render_png_stacks_every_page():
+    result, doc = render(SIXTY_LINES, max_height_mm=20)
+    zoom = 203 / 72.0
+    heights = [page.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).height for page in doc]
+    image = Image.open(io.BytesIO(r.render_png(result["pdf_bytes"], 203)))
+    assert image.width == pytest.approx(576, abs=2)
+    assert image.height == sum(heights)
 
 
 def test_open_withdrawer_sets_the_flag_and_draws_nothing():
