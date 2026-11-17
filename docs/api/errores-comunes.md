@@ -20,7 +20,7 @@ tabla, `X`, `{h}`, `{max}`, `{n}` y `{raw}` se sustituyen por el valor real.
 | `No content to print.` | `content` vacío o ausente (en `/print` RAW o en `/render`) | Manda al menos un item |
 | `Unsupported renderer 'X'. Use 'escpos' or 'pdf'.` | `settings.renderer` inválido | Solo `escpos` o `pdf` |
 | `'font.size' must be a number between 4 and 72.` | `settings.font.size` no numérico o fuera de rango (renderizador PDF) | Número de puntos entre 4 y 72 |
-| `Rendered ticket is too tall ({h} mm > {max} mm).` | El ticket renderizado mide más que `settings.max_height_mm` (default 1000) | Recorta el contenido o sube `max_height_mm` |
+| `Rendered ticket is too tall ({h} mm > {max} mm).` | Un bloque indivisible (imagen, `html`, `spacer`, texto de muchas líneas) mide más que `settings.max_height_mm` (default 1000), o el ticket necesita más de una página y se imprime en modo `driver`. `h` es el alto total del ticket | Parte el bloque, sube `max_height_mm` o imprime en modo `raw` (ahí un ticket largo se parte solo) |
 | `Invalid image data in item {n}.` | Imagen ilegible en el item `n` (índice desde 0 en `content`); solo renderizador PDF y `/render` | Verifica el base64 (PNG/JPG). En ESC/POS el mismo caso da `Error converting image to black and white.` |
 | `Unsupported format 'X'. Use 'pdf' or 'png'.` | `format` inválido en `POST /render` | Solo `pdf` o `png` |
 | `'dpi' must be an integer between 72 and 600.` | `dpi` inválido en `POST /render` (con `format: "png"`) | Entero entre 72 y 600 |

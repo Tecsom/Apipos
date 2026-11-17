@@ -268,8 +268,9 @@ equivalen a `"b"`); un valor no reconocido usa la Fuente A en silencio.
 ### Renderizar el ticket a PDF en Apipos (`settings.renderer: "pdf"`)
 
 Manda el MISMO `content` de un ticket RAW y agrega `settings.renderer: "pdf"`:
-Apipos maqueta el ticket como un PDF de **una sola página, del alto exacto del
-contenido**, con fuentes del sistema (las de `GET /fonts`) o con las integradas
+Apipos maqueta el ticket como un PDF **del alto exacto del contenido** —una
+página; si el ticket mide más que `max_height_mm`, varias páginas consecutivas que
+se imprimen pegadas (ver «Tickets más altos que `max_height_mm`»)—, con fuentes del sistema (las de `GET /fonts`) o con las integradas
 (`sans-serif`, `serif`, `monospace`, que siempre existen y traen acentos y `ñ`),
 y lo imprime por la ruta PDF: `pdf_mode: "raw"` (rasteriza a ESC/POS; para
 tiqueteras) o `"driver"` (el driver del SO lo imprime; para etiqueteras con
@@ -329,7 +330,7 @@ esta sección (se ignoran en silencio). Para ver el resultado sin imprimir usa
 | `font` | objeto `{ "family", "size", "line_height" }` | `{ "family": "sans-serif", "size": 9, "line_height": 1.25 }` | Fuente base del ticket. `family`: una familia de `GET /fonts` o de `builtin`. `size` en puntos, número entre 4 y 72 (si no: error `'font.size' must be a number between 4 and 72.`). `line_height`: multiplicador 0.8–3.0 (fuera de rango → 1.25 en silencio) |
 | `margins_mm` | objeto `{ "top", "right", "bottom", "left" }` | `{ "top": 1, "right": 1, "bottom": 3, "left": 1 }` | Claves faltantes toman su default; valores no numéricos o negativos → default en silencio |
 | `width_mm` | número | ver "Ancho de página" | Ancho de la página en mm |
-| `max_height_mm` | número | `1000` | Si el ticket renderizado lo excede → error `Rendered ticket is too tall ({h} mm > {max} mm).` (`h` con 1 decimal). Un valor no numérico o ≤ 0 usa el default |
+| `max_height_mm` | número | `1000` | Alto máximo de **cada página** del PDF. Un ticket más alto **no se rechaza**: se parte en páginas consecutivas, cortando sólo entre renglones (entre items y entre filas de tabla), y se imprime como un solo ticket continuo (ver «Tickets más altos que `max_height_mm`»). Un valor no numérico o ≤ 0 usa el default |
 | `cut`, `width_dots`, `label_settings`, `max_image_height_dots` | como hoy | como hoy | Mismo significado que en los trabajos PDF / RAW |
 
 #### Ancho de página
@@ -357,6 +358,25 @@ Cómo llega el PDF a la impresora:
   salga de la cuchilla y no aparezca al inicio del siguiente.
 - **`driver`**: el media es el tamaño exacto de la página renderizada
   (ej. `Custom.72x123.4mm`); el corte lo decide el driver.
+
+#### Tickets más altos que `max_height_mm`
+
+Si el ticket maquetado mide más que `max_height_mm`, Apipos lo parte en páginas
+consecutivas, cada una de alto ≤ `max_height_mm`, cortando **sólo entre
+renglones**: después de cada item y entre filas de una tabla (nunca entre el
+encabezado de una tabla y su primera fila, ni dentro de un texto de varias líneas,
+una imagen, un bloque `html` o un `spacer`). El margen superior va sólo en la
+primera página y el inferior sólo en la última.
+
+- **`raw`**: todas las páginas salen en **un solo trabajo**, una tras otra, sin
+  espacio ni corte entre ellas y con **un solo corte al final**: en el papel se ve
+  un ticket continuo. No hay tope de largo total.
+- **`driver`**: un ticket que necesita más de una página se rechaza con
+  `Rendered ticket is too tall ({h} mm > {max} mm).` (el driver decide el medio y
+  el corte, así que no se puede garantizar papel continuo).
+- El mismo error aparece, en cualquier modo, si **un solo bloque** (una imagen, un
+  bloque `html`, un `spacer`, un texto de muchísimas líneas) no cabe en una página.
+  `h` es siempre el alto **total** del ticket.
 
 #### Campos por item
 
@@ -452,7 +472,8 @@ Modo `raw`:
 Modo `driver`: igual, pero con `"strategy": "driver"` y
 `"media": "Custom.72x123.4mm"` en lugar de `width_dots` y `cut`.
 
-- `page_mm`: tamaño de la página renderizada (alto = el del contenido).
+- `page_mm`: ancho de la página y **alto total** del ticket (con varias páginas,
+  la suma de sus altos).
 - `fonts`: cada fuente pedida, con lo que se usó realmente (`resolved`) y su
   origen `source`: `system` (instalada), `builtin` (integrada) o `fallback`
   (no instalada → `sans-serif`).
@@ -521,8 +542,11 @@ Respuesta:
 ```
 
 - Con `format: "pdf"` el `base64` es el PDF (empieza con `JVBERi`) y `dpi` vale
-  `null` (el `dpi` del body se ignora). Con `png` es la imagen de la página
+  `null` (el `dpi` del body se ignora). Con `png` es la imagen del ticket
   (empieza con `iVBORw0KGgo`); a 203 dpi un ticket de 72 mm mide 576 px de ancho.
+- `pages` es el número real de páginas: más de 1 cuando el ticket mide más que
+  `max_height_mm`. Con `format: "pdf"` el PDF trae todas; con `png` la imagen las
+  trae apiladas de arriba abajo (un ticket continuo, como en el papel).
 - `dpi` acepta un entero (`203`, `203.0` o `"203"`); solo se valida con `png`.
 - Errores: `format` inválido → `Unsupported format 'X'. Use 'pdf' or 'png'.`;
   `dpi` fuera de rango o no entero → `'dpi' must be an integer between 72 and 600.`;
@@ -608,7 +632,7 @@ GET /print/test-label?printer=X&mode=raw&width=50&height=25&unit=mm
 | `No content to print.` | `content` vacío o ausente (en `/print` RAW o en `/render`) | Manda al menos un item |
 | `Unsupported renderer 'X'. Use 'escpos' or 'pdf'.` | `settings.renderer` inválido | Solo `escpos` o `pdf` |
 | `'font.size' must be a number between 4 and 72.` | `settings.font.size` no numérico o fuera de rango (renderizador PDF) | Número de puntos entre 4 y 72 |
-| `Rendered ticket is too tall ({h} mm > {max} mm).` | El ticket renderizado mide más que `settings.max_height_mm` (default 1000) | Recorta el contenido o sube `max_height_mm` |
+| `Rendered ticket is too tall ({h} mm > {max} mm).` | Un bloque indivisible (imagen, `html`, `spacer`, texto de muchas líneas) mide más que `settings.max_height_mm` (default 1000), o el ticket necesita más de una página y se imprime en modo `driver`. `h` es el alto total del ticket | Parte el bloque, sube `max_height_mm` o imprime en modo `raw` (ahí un ticket largo se parte solo) |
 | `Invalid image data in item {n}.` | Imagen ilegible en el item `n` (índice desde 0 en `content`); solo renderizador PDF y `/render` | Verifica el base64 (PNG/JPG). En ESC/POS el mismo caso da `Error converting image to black and white.` |
 | `Unsupported format 'X'. Use 'pdf' or 'png'.` | `format` inválido en `POST /render` | Solo `pdf` o `png` |
 | `'dpi' must be an integer between 72 and 600.` | `dpi` inválido en `POST /render` (con `format: "png"`) | Entero entre 72 y 600 |

@@ -56,8 +56,11 @@ Respuesta:
 ```
 
 - Con `format: "pdf"` el `base64` es el PDF (empieza con `JVBERi`) y `dpi` vale
-  `null` (el `dpi` del body se ignora). Con `png` es la imagen de la página
+  `null` (el `dpi` del body se ignora). Con `png` es la imagen del ticket
   (empieza con `iVBORw0KGgo`); a 203 dpi un ticket de 72 mm mide 576 px de ancho.
+- `pages` es el número real de páginas: más de 1 cuando el ticket mide más que
+  `max_height_mm`. Con `format: "pdf"` el PDF trae todas; con `png` la imagen las
+  trae apiladas de arriba abajo (un ticket continuo, como en el papel).
 - `dpi` acepta un entero (`203`, `203.0` o `"203"`); solo se valida con `png`.
 - `page_mm`, `fonts` y `warnings` tienen el mismo significado que en la
   [respuesta del renderizador PDF](./renderer-pdf#respuesta).

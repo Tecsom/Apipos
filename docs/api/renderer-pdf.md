@@ -5,8 +5,10 @@ title: Renderizador PDF
 # Renderizar el ticket a PDF en Apipos (`settings.renderer: "pdf"`)
 
 Manda el MISMO `content` de un [ticket RAW](./ticket-raw) y agrega
-`settings.renderer: "pdf"`: Apipos maqueta el ticket como un PDF de **una sola
-página, del alto exacto del contenido**, con fuentes del sistema (las de
+`settings.renderer: "pdf"`: Apipos maqueta el ticket como un PDF **del alto
+exacto del contenido** —una página; si el ticket mide más que `max_height_mm`,
+varias páginas consecutivas que se imprimen pegadas (ver
+[Tickets más altos que `max_height_mm`](#tickets-largos))—, con fuentes del sistema (las de
 [`GET /fonts`](./vista-previa-y-fuentes#fuentes-del-sistema)) o con las integradas
 (`sans-serif`, `serif`, `monospace`, que siempre existen y traen acentos y `ñ`),
 y lo imprime por la ruta PDF: `pdf_mode: "raw"` (rasteriza a ESC/POS; para
@@ -76,7 +78,7 @@ curl -s -X POST http://localhost:50432/print \
 | `font` | objeto `{ "family", "size", "line_height" }` | `{ "family": "sans-serif", "size": 9, "line_height": 1.25 }` | Fuente base del ticket. `family`: una familia de `GET /fonts` o de `builtin`. `size` en puntos, número entre 4 y 72 (si no: error `'font.size' must be a number between 4 and 72.`). `line_height`: multiplicador 0.8–3.0 (fuera de rango → 1.25 en silencio) |
 | `margins_mm` | objeto `{ "top", "right", "bottom", "left" }` | `{ "top": 1, "right": 1, "bottom": 3, "left": 1 }` | Claves faltantes toman su default; valores no numéricos o negativos → default en silencio |
 | `width_mm` | número | ver [Ancho de página](#ancho-de-pagina) | Ancho de la página en mm |
-| `max_height_mm` | número | `1000` | Si el ticket renderizado lo excede → error `Rendered ticket is too tall ({h} mm > {max} mm).` (`h` con 1 decimal). Un valor no numérico o ≤ 0 usa el default |
+| `max_height_mm` | número | `1000` | Alto máximo de **cada página** del PDF. Un ticket más alto **no se rechaza**: se parte en páginas consecutivas, cortando sólo entre renglones (entre items y entre filas de tabla), y se imprime como un solo ticket continuo (ver [Tickets más altos que `max_height_mm`](#tickets-largos)). Un valor no numérico o ≤ 0 usa el default |
 | `cut`, `width_dots`, `label_settings`, `max_image_height_dots` | como hoy | como hoy | Mismo significado que en los trabajos [PDF](./pdf-y-etiquetas) / [RAW](./ticket-raw#settings) |
 
 ## Ancho de página {#ancho-de-pagina}
@@ -104,6 +106,25 @@ Cómo llega el PDF a la impresora:
   salga de la cuchilla y no aparezca al inicio del siguiente.
 - **`driver`**: el media es el tamaño exacto de la página renderizada
   (ej. `Custom.72x123.4mm`); el corte lo decide el driver.
+
+## Tickets más altos que `max_height_mm` {#tickets-largos}
+
+Si el ticket maquetado mide más que `max_height_mm`, Apipos lo parte en páginas
+consecutivas, cada una de alto ≤ `max_height_mm`, cortando **sólo entre
+renglones**: después de cada item y entre filas de una tabla (nunca entre el
+encabezado de una tabla y su primera fila, ni dentro de un texto de varias líneas,
+una imagen, un bloque `html` o un `spacer`). El margen superior va sólo en la
+primera página y el inferior sólo en la última.
+
+- **`raw`**: todas las páginas salen en **un solo trabajo**, una tras otra, sin
+  espacio ni corte entre ellas y con **un solo corte al final**: en el papel se ve
+  un ticket continuo. No hay tope de largo total.
+- **`driver`**: un ticket que necesita más de una página se rechaza con
+  `Rendered ticket is too tall ({h} mm > {max} mm).` (el driver decide el medio y
+  el corte, así que no se puede garantizar papel continuo).
+- El mismo error aparece, en cualquier modo, si **un solo bloque** (una imagen, un
+  bloque `html`, un `spacer`, un texto de muchísimas líneas) no cabe en una página.
+  `h` es siempre el alto **total** del ticket.
 
 ## Campos por item {#campos-por-item}
 
@@ -204,7 +225,8 @@ Modo `raw`:
 Modo `driver`: igual, pero con `"strategy": "driver"` y
 `"media": "Custom.72x123.4mm"` en lugar de `width_dots` y `cut`.
 
-- `page_mm`: tamaño de la página renderizada (alto = el del contenido).
+- `page_mm`: ancho de la página y **alto total** del ticket (con varias páginas,
+  la suma de sus altos).
 - `fonts`: cada fuente pedida, con lo que se usó realmente (`resolved`) y su
   origen `source`: `system` (instalada), `builtin` (integrada) o `fallback`
   (no instalada → `sans-serif`).
